@@ -8,7 +8,7 @@ import (
 
 func main() {
 	logger := log.NewDevZapLogger()
-	agent := agent.NewAgent("http://localhost:8080/update", agent.NewDefaultHTTPClient(),
+	agent := agent.NewAgent(*agent.ParseCmdFlags(), agent.NewDefaultHTTPClient(),
 		monitor.NewCommonMonitor(monitor.NewCommonMetricsStorage(), logger), logger)
 	agent.Run()
 }

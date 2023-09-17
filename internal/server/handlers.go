@@ -185,6 +185,20 @@ func NewMetricRegistryHandler(registry storage.MetricsStorage, logger log.Logger
 	return &MetricRegistryHandler{registry: registry, log: logger, metricInfo: minfo}
 }
 
+func NewDefaultMetricRegistryHandler() *MetricRegistryHandler {
+	registry := storage.NewCommonMetricsStorage()
+	registry.AddRepository("gauge", storage.NewGaugeMetricRepository())
+	registry.AddRepository("counter", storage.NewCounterMetricRepository())
+
+	minfo := MetricURLInfo{
+		Name:  "metricName",
+		Value: "metricValue",
+		Type:  "metricType",
+	}
+
+	return NewMetricRegistryHandler(registry, log.NewDevZapLogger(), minfo)
+}
+
 func SetupRouting(h *MetricRegistryHandler) http.Handler {
 	r := chi.NewRouter()
 	minfo := h.GetMetricURLInfo()
