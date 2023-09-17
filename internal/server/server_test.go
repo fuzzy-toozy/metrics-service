@@ -6,7 +6,9 @@ import (
 	"testing"
 
 	"github.com/fuzzy-toozy/metrics-service/internal/log"
-	"github.com/fuzzy-toozy/metrics-service/internal/storage"
+	"github.com/fuzzy-toozy/metrics-service/internal/server/handlers"
+	"github.com/fuzzy-toozy/metrics-service/internal/server/routing"
+	"github.com/fuzzy-toozy/metrics-service/internal/server/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -65,8 +67,9 @@ func TestMetricRegistryHandler_ServeHTTP(t *testing.T) {
 			err = repo.AddOrUpdate("one", "1000")
 			require.NoError(t, err)
 
-			h := NewMetricRegistryHandler(registry, log.NewDevZapLogger(), MetricURLInfo{Type: "mtype", Name: "mname", Value: "mval"})
-			r := SetupRouting(h)
+			h := handlers.NewMetricRegistryHandler(registry, log.NewDevZapLogger(),
+				handlers.MetricURLInfo{Type: "mtype", Name: "mname", Value: "mval"})
+			r := routing.SetupRouting(h)
 			r.ServeHTTP(tt.args.w, tt.args.r)
 			require.Equal(t, tt.wantCode, tt.args.w.(*httptest.ResponseRecorder).Code)
 		})

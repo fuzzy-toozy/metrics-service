@@ -1,18 +1,43 @@
 package main
 
 import (
-	"net/http"
+	"context"
 
+	"github.com/fuzzy-toozy/metrics-service/internal/log"
 	"github.com/fuzzy-toozy/metrics-service/internal/server"
+	"github.com/fuzzy-toozy/metrics-service/internal/server/config"
+	"github.com/fuzzy-toozy/metrics-service/internal/server/handlers"
+	"github.com/fuzzy-toozy/metrics-service/internal/server/routing"
+	"github.com/fuzzy-toozy/metrics-service/internal/server/storage"
 )
 
 func main() {
-	s := server.NewDefaultHTTPServer()
-
-	err := s.ListenAndServe()
+	logger := log.NewDevZapLogger()
+	config, err := config.BuildConfig()
 	if err != nil {
-		if err != http.ErrServerClosed {
-			panic(err)
-		}
+		logger.Fatalf("Failed to build server config: %v", err)
+		return
+	}
+	metricsStorage := storage.NewCommonMetricsStorage()
+	registryHandler := handlers.NewDefaultMetricRegistryHandler(logger, metricsStorage)
+	routerHandler := routing.SetupRouting(registryHandler)
+
+	s := server.NewDefaultHTTPServer(*config, logger, routerHandler)
+
+	err = server.Run(
+		func() error {
+			return s.ListenAndServe()
+		},
+		func() error {
+			err := s.Shutdown(context.Background())
+			if err != nil {
+				logger.Error("Shutdown failed. Reason: %v", err)
+			}
+			return err
+		},
+	)
+
+	if err != nil {
+		logger.Warnf("Stop reason: %v", err)
 	}
 }
