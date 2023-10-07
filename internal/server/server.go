@@ -1,33 +1,52 @@
 package server
 
 import (
-	"flag"
+	"context"
 	"net/http"
-	"time"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/fuzzy-toozy/metrics-service/internal/log"
+	"github.com/fuzzy-toozy/metrics-service/internal/server/config"
+	"golang.org/x/sync/errgroup"
 )
 
-type Config struct {
-	serverAddr string
-}
-
-func ParseCmdFlags() *Config {
-	var c Config
-	flag.StringVar(&c.serverAddr, "a", "localhost:8080", "Address and port to bind server to")
-	flag.Parse()
-	return &c
-}
-
-func NewDefaultHTTPServer() *http.Server {
-	c := ParseCmdFlags()
-	h := NewDefaultMetricRegistryHandler()
+func NewDefaultHTTPServer(config config.Config, logger log.Logger, handler http.Handler) *http.Server {
 
 	s := http.Server{
-		Addr:         c.serverAddr,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
-		IdleTimeout:  30 * time.Second,
-		Handler:      SetupRouting(h),
+		Addr:         config.ServerAddress,
+		ReadTimeout:  config.ReadTimeout,
+		WriteTimeout: config.WriteTimeout,
+		IdleTimeout:  config.IdleTimeout,
+		Handler:      handler,
 	}
 
+	logger.Infof("Server listens to: %v", config.ServerAddress)
+
 	return &s
+}
+
+func Run(start func() error, stop func() error) error {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	go func() {
+		c := make(chan os.Signal, 1)
+		signal.Notify(c, os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
+		<-c
+		cancel()
+	}()
+
+	g, gCtx := errgroup.WithContext(ctx)
+
+	g.Go(func() error {
+		return start()
+	})
+
+	g.Go(func() error {
+		<-gCtx.Done()
+		return stop()
+	})
+
+	return g.Wait()
 }
