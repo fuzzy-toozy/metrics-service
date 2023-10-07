@@ -13,16 +13,21 @@ func main() {
 	registry := storage.NewCommonMetricsStorage()
 	registry.AddRepository("gauge", storage.NewGaugeMetricRepository())
 	registry.AddRepository("counter", storage.NewCounterMetricRepository())
-	h := server.NewMetricRegistryHandler(registry, log.NewDevZapLogger())
 
-	mux := http.NewServeMux()
-	mux.Handle("/update/", http.StripPrefix("/update/", h))
+	minfo := server.MetricURLInfo{
+		Name:  "metricName",
+		Value: "metricValue",
+		Type:  "metricType",
+	}
+
+	h := server.NewMetricRegistryHandler(registry, log.NewDevZapLogger(), minfo)
+
 	s := http.Server{
 		Addr:         ":8080",
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  30 * time.Second,
-		Handler:      mux,
+		Handler:      server.SetupRouting(h),
 	}
 
 	err := s.ListenAndServe()

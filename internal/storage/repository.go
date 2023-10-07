@@ -61,10 +61,22 @@ type Repository interface {
 	AddOrUpdate(key string, val string) error
 	Delete(key string) error
 	Get(key string) (Metric, error)
+	ForEachMetric(func(name string, m Metric) error) error
 }
 
 type CommonMetricRepository struct {
 	storage map[string]Metric
+}
+
+func (r *CommonMetricRepository) ForEachMetric(callback func(name string, m Metric) error) error {
+	for n, m := range r.storage {
+		err := callback(n, m)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (r *CommonMetricRepository) Delete(key string) error {
@@ -132,10 +144,23 @@ type MetricsStorage interface {
 	GetRepository(name string) (Repository, error)
 	AddRepository(name string, repo Repository) error
 	DeleteRepository(name string) error
+	ForEachRepository(func(name string, repo Repository) error) error
 }
 
 type CommonMetricsStorage struct {
 	storage map[string]Repository
+}
+
+func (s *CommonMetricsStorage) ForEachRepository(callback func(name string, repo Repository) error) error {
+	for n, r := range s.storage {
+		err := callback(n, r)
+
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (s *CommonMetricsStorage) GetRepository(name string) (Repository, error) {
