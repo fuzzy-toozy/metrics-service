@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strconv"
 	"time"
+
+	"github.com/fuzzy-toozy/metrics-service/internal/common"
 )
 
 type Metric interface {
@@ -26,17 +28,13 @@ func (m *MetricUpdateTime) SetLastTimeUpdated(t time.Time) {
 }
 
 type GaugeMetric struct {
+	common.Float
 	MetricUpdateTime
-	Val float64
 }
 
 type CounterMetric struct {
+	common.Int
 	MetricUpdateTime
-	Val int64
-}
-
-func (m GaugeMetric) GetValue() string {
-	return strconv.FormatFloat(m.Val, 'f', -1, 64)
 }
 
 func (m *GaugeMetric) UpdateValue(v string) error {
@@ -46,10 +44,6 @@ func (m *GaugeMetric) UpdateValue(v string) error {
 	}
 	m.Val = val
 	return nil
-}
-
-func (m CounterMetric) GetValue() string {
-	return strconv.FormatInt(m.Val, 10)
 }
 
 func (m *CounterMetric) UpdateValue(v string) error {
@@ -81,7 +75,7 @@ func (r *CommonMetricRepository) Delete(key string) error {
 func (r *CommonMetricRepository) Get(key string) (Metric, error) {
 	val, ok := r.storage[key]
 	if !ok {
-		return nil, nil
+		return nil, fmt.Errorf("no metric for key %v", key)
 	}
 
 	return val, nil
