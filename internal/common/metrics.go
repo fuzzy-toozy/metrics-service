@@ -2,6 +2,10 @@ package common
 
 import "strconv"
 
+const MetricTypeGauge = "gauge"
+
+const MetricTypeCounter = "counter"
+
 type Float struct {
 	Val float64
 }

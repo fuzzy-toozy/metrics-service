@@ -1,11 +1,13 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 	"text/template"
 
+	"github.com/fuzzy-toozy/metrics-service/internal/common"
 	"github.com/fuzzy-toozy/metrics-service/internal/log"
 	"github.com/fuzzy-toozy/metrics-service/internal/server/storage"
 	"github.com/go-chi/chi"
@@ -28,29 +30,67 @@ func (h *MetricRegistryHandler) GetMetricURLInfo() MetricURLInfo {
 	return h.metricInfo
 }
 
+func (h *MetricRegistryHandler) getMetric(mtype, mname string) (string, int) {
+	repo, err := h.registry.GetRepository(mtype)
+
+	if err != nil {
+		h.log.Debugf("No repository exists for metric: %v. %v", mtype, err)
+		return "Bad metric type", http.StatusBadRequest
+	}
+
+	m, err := repo.Get(mname)
+
+	if err != nil {
+		h.log.Debugf("Metric get failed: %v. %v", mname, err)
+		return "Metric not fould", http.StatusNotFound
+	}
+
+	return m.GetValue(), http.StatusOK
+}
+
 func (h *MetricRegistryHandler) GetMetric(w http.ResponseWriter, r *http.Request) {
 	metricType := strings.ToLower(chi.URLParam(r, h.metricInfo.Type))
 	metricName := strings.ToLower(chi.URLParam(r, h.metricInfo.Name))
 
-	repo, err := h.registry.GetRepository(metricType)
+	msg, status := h.getMetric(metricType, metricName)
 
-	if err != nil {
-		h.log.Debugf("No repository exists for metric: %v. %v", metricType, err)
-		http.Error(w, "Bad metric type", http.StatusBadRequest)
+	h.log.Debugf("Get metric result: %v", msg)
+
+	w.Header().Set("Content-Type", "text/plain")
+	w.WriteHeader(status)
+	w.Write([]byte(msg))
+}
+
+func (h *MetricRegistryHandler) GetMetricJSON(w http.ResponseWriter, r *http.Request) {
+	receivedData := common.MetricJSON{}
+
+	if err := json.NewDecoder(r.Body).Decode(&receivedData); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		h.log.Debugf("Failed to decode JSON data: %v", err)
+		w.Write([]byte("Bad metric format"))
 		return
 	}
 
-	m, err := repo.Get(metricName)
+	msg, status := h.getMetric(receivedData.MType, receivedData.ID)
 
-	if err != nil {
-		h.log.Debugf("Metric get failed: %v. %v", metricName, err)
-		http.Error(w, "Metric not fould", http.StatusNotFound)
+	h.log.Debugf("Get metric result: %v", msg)
+
+	if status != http.StatusOK {
+		w.WriteHeader(status)
+		w.Write([]byte(msg))
 		return
 	}
 
-	w.Header().Add("Content-Type", "text/plain")
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(m.GetValue()))
+	if err := receivedData.SetData(msg); err != nil {
+		h.log.Debugf("Failed to get metric %v", err)
+		http.Error(w, "Failed to get metric", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Add("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(receivedData)
+
 }
 
 func (h *MetricRegistryHandler) GetAllMetrics(w http.ResponseWriter, r *http.Request) {
@@ -111,33 +151,70 @@ func (h *MetricRegistryHandler) GetAllMetrics(w http.ResponseWriter, r *http.Req
 	h.allMetrics.Execute(w, metrics)
 }
 
+func (h *MetricRegistryHandler) updateMetric(mtype, mname, mvalue string) (string, int) {
+	repo, err := h.registry.GetRepository(mtype)
+
+	if err != nil {
+		h.log.Debugf("No repository exists for metric: %v. %v", mtype, err)
+		return "Bad metric type", http.StatusBadRequest
+	}
+
+	err = repo.AddOrUpdate(mname, mvalue)
+
+	if err != nil {
+		h.log.Debugf("Bad metric value: %v. %v", mvalue, err)
+		return "Bad metric value", http.StatusBadRequest
+	}
+
+	m, _ := repo.Get(mname)
+	msg := fmt.Sprintf("Metric type '%v', name: '%v', value: '%v' updated. New value: '%v'",
+		mtype, mname, mvalue, m.GetValue())
+
+	return msg, http.StatusOK
+}
+
 func (h *MetricRegistryHandler) UpdateMetric(w http.ResponseWriter, r *http.Request) {
 	metricType := strings.ToLower(chi.URLParam(r, h.metricInfo.Type))
 	metricName := strings.ToLower(chi.URLParam(r, h.metricInfo.Name))
 	metricValue := strings.ToLower(chi.URLParam(r, h.metricInfo.Value))
 
-	repo, err := h.registry.GetRepository(metricType)
+	msg, status := h.updateMetric(metricType, metricName, metricValue)
 
-	if err != nil {
-		h.log.Debugf("No repository exists for metric: %v. %v", metricType, err)
-		http.Error(w, "Bad metric type", http.StatusBadRequest)
+	w.WriteHeader(status)
+	w.Write([]byte(msg))
+}
+
+func (h *MetricRegistryHandler) UpdateMetricFromJSON(w http.ResponseWriter, r *http.Request) {
+	receivedData := common.MetricJSON{}
+
+	if err := json.NewDecoder(r.Body).Decode(&receivedData); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		h.log.Debugf("Failed to decode JSON data: %v", err)
+		w.Write([]byte("Bad metric format"))
 		return
 	}
 
-	err = repo.AddOrUpdate(metricName, metricValue)
+	value, err := receivedData.GetData()
 
 	if err != nil {
-		h.log.Debugf("Bad metric value: %v. %v", metricValue, err)
-		http.Error(w, "Bad metric value", http.StatusBadRequest)
+		w.WriteHeader(http.StatusBadRequest)
+		h.log.Debugf("Failed to get metric data: %v", err)
+		w.Write([]byte("Bad metric value"))
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
-	m, _ := repo.Get(metricName)
-	logStr := fmt.Sprintf("Metric type '%v', name: '%v', value: '%v' updated. New value: '%v'",
-		metricType, metricName, metricValue, m.GetValue())
-	h.log.Debugf(logStr)
-	w.Write([]byte(logStr))
+	msg, status := h.updateMetric(receivedData.MType, receivedData.ID, value)
+
+	h.log.Debugf(msg)
+
+	if status != http.StatusOK {
+		w.WriteHeader(status)
+		w.Write([]byte(msg))
+	} else {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		json.NewEncoder(w).Encode(receivedData)
+	}
 }
 
 func (h *MetricRegistryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {

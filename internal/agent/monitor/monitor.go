@@ -89,6 +89,9 @@ var metricsGatherCallbacks []func(*runtime.MemStats, storage.MetricsStorage) err
 		return s.AddOrUpdate("NumForcedGC", metrics.NewGaugeMeric(float64(m.NumForcedGC)))
 	},
 	func(m *runtime.MemStats, s storage.MetricsStorage) error {
+		return s.AddOrUpdate("GCCPUFraction", metrics.NewGaugeMeric(float64(m.GCCPUFraction)))
+	},
+	func(m *runtime.MemStats, s storage.MetricsStorage) error {
 		return s.AddOrUpdate("RandomValue", metrics.NewGaugeMeric(float64(rand.Intn(999999))))
 	},
 	func(m *runtime.MemStats, s storage.MetricsStorage) error {
