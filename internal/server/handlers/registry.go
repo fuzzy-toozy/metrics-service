@@ -20,45 +20,47 @@ type MetricURLInfo struct {
 }
 
 type MetricRegistryHandler struct {
-	registry   storage.MetricsStorage
-	log        log.Logger
-	metricInfo MetricURLInfo
-	allMetrics *template.Template
+	registry     storage.MetricsStorage
+	log          log.Logger
+	metricInfo   MetricURLInfo
+	allMetrics   *template.Template
+	storageSaver storage.StorageSaver
 }
 
 func (h *MetricRegistryHandler) GetMetricURLInfo() MetricURLInfo {
 	return h.metricInfo
 }
 
-func (h *MetricRegistryHandler) getMetric(mtype, mname string) (string, int) {
+func (h *MetricRegistryHandler) getMetric(mtype, mname string) (metricValue string, statusCode int, err error) {
 	repo, err := h.registry.GetRepository(mtype)
 
 	if err != nil {
-		h.log.Debugf("No repository exists for metric: %v. %v", mtype, err)
-		return "Bad metric type", http.StatusBadRequest
+		err = fmt.Errorf("failed to get repository for metric %v: %w", mtype, err)
+		return "", http.StatusBadRequest, err
 	}
 
 	m, err := repo.Get(mname)
 
 	if err != nil {
-		h.log.Debugf("Metric get failed: %v. %v", mname, err)
-		return "Metric not fould", http.StatusNotFound
+		return "", http.StatusNotFound, err
 	}
 
-	return m.GetValue(), http.StatusOK
+	return m.GetValue(), http.StatusOK, nil
 }
 
 func (h *MetricRegistryHandler) GetMetric(w http.ResponseWriter, r *http.Request) {
 	metricType := strings.ToLower(chi.URLParam(r, h.metricInfo.Type))
 	metricName := strings.ToLower(chi.URLParam(r, h.metricInfo.Name))
 
-	msg, status := h.getMetric(metricType, metricName)
+	value, status, err := h.getMetric(metricType, metricName)
 
-	h.log.Debugf("Get metric result: %v", msg)
+	if err != nil {
+		h.log.Errorf("Failed to get metric of type %v, name %v: %v", metricType, metricName, err)
+	}
 
 	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(status)
-	w.Write([]byte(msg))
+	w.Write([]byte(value))
 }
 
 func (h *MetricRegistryHandler) GetMetricJSON(w http.ResponseWriter, r *http.Request) {
@@ -71,17 +73,19 @@ func (h *MetricRegistryHandler) GetMetricJSON(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	msg, status := h.getMetric(receivedData.MType, receivedData.ID)
+	value, status, err := h.getMetric(receivedData.MType, receivedData.ID)
 
-	h.log.Debugf("Get metric result: %v", msg)
+	if err != nil {
+		h.log.Errorf("Failed to get metric of type %v, name %v: %v", receivedData.MType, receivedData.ID, err)
+	}
 
 	if status != http.StatusOK {
 		w.WriteHeader(status)
-		w.Write([]byte(msg))
+		w.Write([]byte(value))
 		return
 	}
 
-	if err := receivedData.SetData(msg); err != nil {
+	if err := receivedData.SetData(value); err != nil {
 		h.log.Debugf("Failed to get metric %v", err)
 		http.Error(w, "Failed to get metric", http.StatusInternalServerError)
 		return
@@ -151,26 +155,30 @@ func (h *MetricRegistryHandler) GetAllMetrics(w http.ResponseWriter, r *http.Req
 	h.allMetrics.Execute(w, metrics)
 }
 
-func (h *MetricRegistryHandler) updateMetric(mtype, mname, mvalue string) (string, int) {
+func (h *MetricRegistryHandler) updateMetric(mtype, mname, mvalue string) (metricValue string, statusCode int, err error) {
 	repo, err := h.registry.GetRepository(mtype)
 
 	if err != nil {
-		h.log.Debugf("No repository exists for metric: %v. %v", mtype, err)
-		return "Bad metric type", http.StatusBadRequest
+		return "", http.StatusBadRequest, fmt.Errorf("failed to get repository for metric: %v: %w", mtype, err)
 	}
 
 	err = repo.AddOrUpdate(mname, mvalue)
 
 	if err != nil {
 		h.log.Debugf("Bad metric value: %v. %v", mvalue, err)
-		return "Bad metric value", http.StatusBadRequest
+		return "", http.StatusBadRequest, fmt.Errorf("failed to add/update metric %v with value %v: %w", mname, mvalue, err)
+	}
+
+	if h.storageSaver != nil {
+		err := h.storageSaver.Save()
+		if err != nil {
+			h.log.Errorf("Failed to update persistent storage: %v", err)
+		}
 	}
 
 	m, _ := repo.Get(mname)
-	msg := fmt.Sprintf("Metric type '%v', name: '%v', value: '%v' updated. New value: '%v'",
-		mtype, mname, mvalue, m.GetValue())
 
-	return msg, http.StatusOK
+	return m.GetValue(), http.StatusOK, nil
 }
 
 func (h *MetricRegistryHandler) UpdateMetric(w http.ResponseWriter, r *http.Request) {
@@ -178,10 +186,14 @@ func (h *MetricRegistryHandler) UpdateMetric(w http.ResponseWriter, r *http.Requ
 	metricName := strings.ToLower(chi.URLParam(r, h.metricInfo.Name))
 	metricValue := strings.ToLower(chi.URLParam(r, h.metricInfo.Value))
 
-	msg, status := h.updateMetric(metricType, metricName, metricValue)
+	value, status, err := h.updateMetric(metricType, metricName, metricValue)
+
+	if err != nil {
+		h.log.Debugf("Failed to  update metric: %v", err)
+	}
 
 	w.WriteHeader(status)
-	w.Write([]byte(msg))
+	w.Write([]byte(value))
 }
 
 func (h *MetricRegistryHandler) UpdateMetricFromJSON(w http.ResponseWriter, r *http.Request) {
@@ -203,13 +215,12 @@ func (h *MetricRegistryHandler) UpdateMetricFromJSON(w http.ResponseWriter, r *h
 		return
 	}
 
-	msg, status := h.updateMetric(receivedData.MType, receivedData.ID, value)
+	value, status, err := h.updateMetric(receivedData.MType, receivedData.ID, value)
 
-	h.log.Debugf(msg)
-
-	if status != http.StatusOK {
+	if err != nil {
+		h.log.Debugf("Failed to updatge metric: %v", err)
 		w.WriteHeader(status)
-		w.Write([]byte(msg))
+		w.Write([]byte(value))
 	} else {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
@@ -258,11 +269,13 @@ func (h *MetricRegistryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 	w.Write([]byte(logStr))
 }
 
-func NewMetricRegistryHandler(registry storage.MetricsStorage, logger log.Logger, minfo MetricURLInfo) *MetricRegistryHandler {
-	return &MetricRegistryHandler{registry: registry, log: logger, metricInfo: minfo}
+func NewMetricRegistryHandler(registry storage.MetricsStorage, logger log.Logger, minfo MetricURLInfo,
+	storageSaver storage.StorageSaver) *MetricRegistryHandler {
+	return &MetricRegistryHandler{registry: registry, log: logger, metricInfo: minfo, storageSaver: storageSaver}
 }
 
-func NewDefaultMetricRegistryHandler(logger log.Logger, registry storage.MetricsStorage) *MetricRegistryHandler {
+func NewDefaultMetricRegistryHandler(logger log.Logger, registry storage.MetricsStorage,
+	storageSaver storage.StorageSaver) *MetricRegistryHandler {
 	registry.AddRepository("gauge", storage.NewGaugeMetricRepository())
 	registry.AddRepository("counter", storage.NewCounterMetricRepository())
 
@@ -272,5 +285,5 @@ func NewDefaultMetricRegistryHandler(logger log.Logger, registry storage.Metrics
 		Type:  "metricType",
 	}
 
-	return NewMetricRegistryHandler(registry, logger, minfo)
+	return NewMetricRegistryHandler(registry, logger, minfo, storageSaver)
 }

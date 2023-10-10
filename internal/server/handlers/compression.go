@@ -33,12 +33,15 @@ func setupCompression(w http.ResponseWriter, r *http.Request, log logging.Logger
 					log.Debugf("Failed to get compression factory for algo %v: %v", compAlgo, err)
 					continue
 				}
-				goto exitLoop
+				break
 			}
+		}
+		// Algorithm found
+		if err == nil {
+			break
 		}
 	}
 
-exitLoop:
 	if err != nil {
 		return nil, err
 	}

@@ -1,8 +1,13 @@
 package storage
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/fuzzy-toozy/metrics-service/internal/common"
@@ -13,6 +18,7 @@ type Metric interface {
 	GetLastTimeUpdated() time.Time
 	SetLastTimeUpdated(t time.Time)
 	UpdateValue(v string) error
+	MarshalJSON() ([]byte, error)
 }
 
 type MetricUpdateTime struct {
@@ -35,6 +41,38 @@ type GaugeMetric struct {
 type CounterMetric struct {
 	common.Int
 	MetricUpdateTime
+}
+
+func valToBytes(m Metric) []byte {
+	return []byte(fmt.Sprintf("\"%v\"", m.GetValue()))
+}
+
+func (m *CounterMetric) MarshalJSON() ([]byte, error) {
+	return valToBytes(m), nil
+}
+
+func (m *GaugeMetric) MarshalJSON() ([]byte, error) {
+	return valToBytes(m), nil
+}
+
+func unmarshalJSON(data []byte, m Metric) error {
+	row := string(data[:])
+	rowTrimmed := strings.Trim(row, "{}")
+	vals := strings.Split(rowTrimmed, ":")
+
+	if len(vals) != 2 {
+		return fmt.Errorf("incorrect format")
+	}
+
+	return m.UpdateValue(strings.Trim(vals[1], "\""))
+}
+
+func (m *GaugeMetric) UnmarshalJSON(data []byte) error {
+	return unmarshalJSON(data, m)
+}
+
+func (m *CounterMetric) UnmarshalJSON(data []byte) error {
+	return unmarshalJSON(data, m)
 }
 
 func (m *GaugeMetric) UpdateValue(v string) error {
@@ -62,13 +100,34 @@ type Repository interface {
 	Delete(key string) error
 	Get(key string) (Metric, error)
 	ForEachMetric(func(name string, m Metric) error) error
+	MarshalJSON() ([]byte, error)
+	UnmarshalJSON(data []byte) error
 }
 
 type CommonMetricRepository struct {
 	storage map[string]Metric
+	lock    sync.RWMutex
+}
+
+func (r *CommonMetricRepository) MarshalJSON() ([]byte, error) {
+	r.lock.RLock()
+	defer r.lock.RUnlock()
+
+	return json.Marshal(r.storage)
+}
+
+func (r *CommonMetricRepository) UnmarshalJSON(data []byte) error {
+	r.lock.Lock()
+	defer r.lock.Unlock()
+	m := map[string]map[string]string{}
+	err := json.Unmarshal(data, &m)
+	fmt.Println(m)
+	return err
 }
 
 func (r *CommonMetricRepository) ForEachMetric(callback func(name string, m Metric) error) error {
+	r.lock.Lock()
+	defer r.lock.Unlock()
 	for n, m := range r.storage {
 		err := callback(n, m)
 		if err != nil {
@@ -80,11 +139,15 @@ func (r *CommonMetricRepository) ForEachMetric(callback func(name string, m Metr
 }
 
 func (r *CommonMetricRepository) Delete(key string) error {
+	r.lock.Lock()
+	defer r.lock.Unlock()
 	delete(r.storage, key)
 	return nil
 }
 
 func (r *CommonMetricRepository) Get(key string) (Metric, error) {
+	r.lock.RLock()
+	defer r.lock.RUnlock()
 	val, ok := r.storage[key]
 	if !ok {
 		return nil, fmt.Errorf("no metric for key %v", key)
@@ -98,6 +161,8 @@ type GaugeMetricRepository struct {
 }
 
 func (r *GaugeMetricRepository) AddOrUpdate(key string, val string) error {
+	r.lock.Lock()
+	defer r.lock.Unlock()
 	return addOrUpdate(key, val, &GaugeMetric{}, r.storage)
 
 }
@@ -113,6 +178,8 @@ type CounterMetricRepository struct {
 }
 
 func (r *CounterMetricRepository) AddOrUpdate(key string, val string) error {
+	r.lock.Lock()
+	defer r.lock.Unlock()
 	return addOrUpdate(key, val, &CounterMetric{}, r.storage)
 }
 
@@ -145,10 +212,42 @@ type MetricsStorage interface {
 	AddRepository(name string, repo Repository) error
 	DeleteRepository(name string) error
 	ForEachRepository(func(name string, repo Repository) error) error
+	Save(w io.Writer) error
+	Load(w io.Reader) error
 }
 
 type CommonMetricsStorage struct {
 	storage map[string]Repository
+}
+
+func (s *CommonMetricsStorage) Save(w io.Writer) error {
+	return json.NewEncoder(w).Encode(s.storage)
+}
+
+func (s *CommonMetricsStorage) Load(r io.Reader) error {
+	m := map[string]map[string]string{}
+	b := bytes.Buffer{}
+	io.Copy(&b, r)
+
+	err := json.Unmarshal(b.Bytes(), &m)
+	if err != nil {
+		return err
+	}
+
+	for storageName, metricsStorage := range m {
+		repo, err := s.GetRepository(storageName)
+		if err != nil {
+			return err
+		}
+		for metricName, metricValue := range metricsStorage {
+			err := repo.AddOrUpdate(metricName, metricValue)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }
 
 func (s *CommonMetricsStorage) ForEachRepository(callback func(name string, repo Repository) error) error {
