@@ -134,7 +134,7 @@ func (a *Agent) ReportMetrics() error {
 }
 
 func (a *Agent) Run() {
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(3 * time.Second)
 	for {
 		select {
 		case <-time.After(2 * time.Second):
