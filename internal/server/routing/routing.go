@@ -13,6 +13,16 @@ func SetupRouting(h *handlers.MetricRegistryHandler) http.Handler {
 	r := chi.NewRouter()
 	minfo := h.GetMetricURLInfo()
 
+	r.Route("/ping", func(r chi.Router) {
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			h.CheckDatabaseConnection(w, r)
+		})
+
+		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+			handler.ServeHTTP(w, r)
+		})
+	})
+
 	r.Route("/update", func(r chi.Router) {
 		r.Post(fmt.Sprintf("/{%v}/{%v}/{%v}", minfo.Type, minfo.Name, minfo.Value),
 			func(w http.ResponseWriter, r *http.Request) {
