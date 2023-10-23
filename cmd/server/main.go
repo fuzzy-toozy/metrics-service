@@ -21,9 +21,11 @@ func main() {
 	metricsStorage := storage.NewCommonMetricsStorage()
 	registryHandler := handlers.NewDefaultMetricRegistryHandler(logger, metricsStorage)
 	routerHandler := routing.SetupRouting(registryHandler)
-	loggingHandler := handlers.WithLogging(routerHandler, logger)
+	serverHandler := handlers.WithLogging(
+		handlers.WithCompression(routerHandler, logger),
+		logger)
 
-	s := server.NewDefaultHTTPServer(*config, logger, loggingHandler)
+	s := server.NewDefaultHTTPServer(*config, logger, serverHandler)
 
 	err = server.Run(
 		func() error {
