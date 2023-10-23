@@ -15,7 +15,7 @@ func SetupRouting(h *handlers.MetricRegistryHandler) http.Handler {
 
 	r.Route("/ping", func(r chi.Router) {
 		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			h.CheckDatabaseConnection(w, r)
+			h.HealthCheck(w, r)
 		})
 
 		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
@@ -32,6 +32,17 @@ func SetupRouting(h *handlers.MetricRegistryHandler) http.Handler {
 		handlerFunc := middleware.AllowContentType("application/json")
 		handler := handlerFunc(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			h.UpdateMetricFromJSON(w, r)
+		}))
+
+		r.Post("/", func(w http.ResponseWriter, r *http.Request) {
+			handler.ServeHTTP(w, r)
+		})
+	})
+
+	r.Route("/updates", func(r chi.Router) {
+		handlerFunc := middleware.AllowContentType("application/json")
+		handler := handlerFunc(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			h.UpdateMetricsFromJSON(w, r)
 		}))
 
 		r.Post("/", func(w http.ResponseWriter, r *http.Request) {

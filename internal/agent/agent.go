@@ -13,7 +13,6 @@ import (
 	"github.com/fuzzy-toozy/metrics-service/internal/agent/config"
 	monitorHttp "github.com/fuzzy-toozy/metrics-service/internal/agent/http"
 	"github.com/fuzzy-toozy/metrics-service/internal/agent/monitor"
-	"github.com/fuzzy-toozy/metrics-service/internal/agent/monitor/metrics"
 	"github.com/fuzzy-toozy/metrics-service/internal/common"
 	"github.com/fuzzy-toozy/metrics-service/internal/compression"
 	"github.com/fuzzy-toozy/metrics-service/internal/log"
@@ -71,25 +70,70 @@ func (a *Agent) GetCompressedBytes(data []byte) ([]byte, error) {
 	return nil, fmt.Errorf("no compression algo specified")
 }
 
+func (a *Agent) ReportMetricsBulk() error {
+	serverEndpoint := a.config.ServerAddress + a.config.ReportBulkURL
+	serverEndpoint = path.Clean(serverEndpoint)
+	serverEndpoint = strings.Trim(serverEndpoint, "/")
+	serverEndpoint = fmt.Sprintf("http://%v", serverEndpoint)
+
+	metricsList := a.metricsMonitor.GetMetricsStorage().GetAllMetrics()
+
+	contentType := "application/json"
+	contentEncoding := ""
+
+	a.buffer.Reset()
+	if err := json.NewEncoder(&a.buffer).Encode(metricsList); err != nil {
+		return fmt.Errorf("failed to encode metrics to JSON: %w", err)
+	}
+
+	bytesToSend := a.buffer.Bytes()
+
+	compressedBytes, err := a.GetCompressedBytes(bytesToSend)
+	if err != nil {
+		a.log.Debugf("Unable to enable compression: %v", err)
+	} else {
+		bytesToSend = compressedBytes
+		contentEncoding = a.compressAlgo
+	}
+
+	req, err := http.NewRequest(http.MethodPost, serverEndpoint, bytes.NewBuffer(bytesToSend))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("Content-Encoding", contentEncoding)
+
+	resp, err := a.httpClient.Send(req)
+
+	if resp != nil {
+		defer func() {
+			_, err := io.Copy(io.Discard, resp.Body)
+			if err != nil {
+				a.log.Debugf("Failed reading request body: %v", err)
+			}
+			resp.Body.Close()
+		}()
+
+		if resp.StatusCode != http.StatusOK {
+			err = fmt.Errorf("failed to send metrics. Status code: %v", resp.StatusCode)
+		}
+	}
+
+	return err
+}
+
 func (a *Agent) ReportMetrics() error {
 	serverEndpoint := a.config.ServerAddress + a.config.ReportURL
 	serverEndpoint = path.Clean(serverEndpoint)
 	serverEndpoint = strings.Trim(serverEndpoint, "/")
 	serverEndpoint = fmt.Sprintf("http://%v", serverEndpoint)
-
-	return a.metricsMonitor.GetMetrics().ForEachMetric(func(metricName string, m metrics.Metric) error {
-		metricValue := m.GetValue()
-		metricType := m.GetType()
-		metricJSON := common.MetricJSON{ID: metricName, MType: metricType}
+	fmt.Println("Storage length:", len(a.metricsMonitor.GetMetricsStorage().GetAllMetrics()))
+	for _, m := range a.metricsMonitor.GetMetricsStorage().GetAllMetrics() {
 		contentType := "application/json"
 		contentEncoding := ""
 
-		if err := metricJSON.SetData(metricValue); err != nil {
-			return fmt.Errorf("failed to set metric %v data to %v", metricName, metricValue)
-		}
-
 		a.buffer.Reset()
-		if err := json.NewEncoder(&a.buffer).Encode(metricJSON); err != nil {
+		if err := json.NewEncoder(&a.buffer).Encode(m); err != nil {
 			return fmt.Errorf("failed to encode metric to JSON: %w", err)
 		}
 
@@ -121,20 +165,26 @@ func (a *Agent) ReportMetrics() error {
 				resp.Body.Close()
 			}()
 
+			val, _ := m.GetData()
 			a.log.Debugf("Sent metric of type %v, name %v, value %v to %v. Status %v",
-				metricType, metricName, metricValue, serverEndpoint, resp.StatusCode)
+				m.MType, m.ID, val, serverEndpoint, resp.StatusCode)
 
 			if resp.StatusCode != http.StatusOK {
-				err = fmt.Errorf("failed to send metric %v. Status code: %v", metricName, resp.StatusCode)
+				err = fmt.Errorf("failed to send metric %v. Status code: %v", m.ID, resp.StatusCode)
 			}
 		}
 
-		return err
-	})
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (a *Agent) Run() {
-	ticker := time.NewTicker(3 * time.Second)
+	ticker := time.NewTicker(10 * time.Second)
+	retryExecutor := common.NewCommonRetryExecutor(2*time.Second, 3, nil)
 	for {
 		select {
 		case <-time.After(2 * time.Second):
@@ -143,9 +193,17 @@ func (a *Agent) Run() {
 				a.log.Warnf("Failed to gather metrics. %v", err)
 			}
 		case <-ticker.C:
-			err := a.ReportMetrics()
+			err := retryExecutor.RetryOnError(func() error {
+				return a.ReportMetricsBulk()
+			})
 			if err != nil {
-				a.log.Warnf("Failed to report metric. %v", err)
+				a.log.Warnf("Failed to report metrics bulk. %v", err)
+			}
+			err = retryExecutor.RetryOnError(func() error {
+				return a.ReportMetrics()
+			})
+			if err != nil {
+				a.log.Warnf("Failed to report metrics. %v", err)
 			}
 		}
 	}

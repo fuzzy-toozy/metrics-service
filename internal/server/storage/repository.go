@@ -3,286 +3,148 @@ package storage
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"strconv"
-	"strings"
 	"sync"
-	"time"
 
-	"github.com/fuzzy-toozy/metrics-service/internal/common"
+	"github.com/fuzzy-toozy/metrics-service/internal/metrics"
+	"github.com/fuzzy-toozy/metrics-service/internal/server/errtypes"
 )
 
-type Metric interface {
-	GetValue() string
-	GetLastTimeUpdated() time.Time
-	SetLastTimeUpdated(t time.Time)
-	UpdateValue(v string) error
-	MarshalJSON() ([]byte, error)
-}
-
-type MetricUpdateTime struct {
-	LastTimeUpdated time.Time
-}
-
-func (m MetricUpdateTime) GetLastTimeUpdated() time.Time {
-	return m.LastTimeUpdated
-}
-
-func (m *MetricUpdateTime) SetLastTimeUpdated(t time.Time) {
-	m.LastTimeUpdated = t
-}
-
-type GaugeMetric struct {
-	common.Float
-	MetricUpdateTime
-}
-
-type CounterMetric struct {
-	common.Int
-	MetricUpdateTime
-}
-
-func valToBytes(m Metric) []byte {
-	return []byte(fmt.Sprintf("\"%v\"", m.GetValue()))
-}
-
-func (m *CounterMetric) MarshalJSON() ([]byte, error) {
-	return valToBytes(m), nil
-}
-
-func (m *GaugeMetric) MarshalJSON() ([]byte, error) {
-	return valToBytes(m), nil
-}
-
-func unmarshalJSON(data []byte, m Metric) error {
-	row := string(data[:])
-	rowTrimmed := strings.Trim(row, "{}")
-	vals := strings.Split(rowTrimmed, ":")
-
-	if len(vals) != 2 {
-		return fmt.Errorf("incorrect format")
-	}
-
-	return m.UpdateValue(strings.Trim(vals[1], "\""))
-}
-
-func (m *GaugeMetric) UnmarshalJSON(data []byte) error {
-	return unmarshalJSON(data, m)
-}
-
-func (m *CounterMetric) UnmarshalJSON(data []byte) error {
-	return unmarshalJSON(data, m)
-}
-
-func (m *GaugeMetric) UpdateValue(v string) error {
-	val, err := strconv.ParseFloat(v, 64)
-	if err != nil {
-		return err
-	}
-	m.Val = val
-	return nil
-}
-
-func (m *CounterMetric) UpdateValue(v string) error {
-	val, err := strconv.ParseInt(v, 10, 64)
-
-	if err != nil {
-		return err
-	}
-
-	m.Val += val
-	return nil
-}
-
 type Repository interface {
-	AddOrUpdate(key string, val string) error
+	AddOrUpdate(key string, val string, mtype string) (string, error)
 	Delete(key string) error
-	Get(key string) (Metric, error)
-	ForEachMetric(func(name string, m Metric) error) error
+	Get(key string, mtype string) (metrics.Metric, error)
+	GetAll() ([]metrics.Metric, error)
+	AddMetricsBulk(metrics []metrics.Metric) error
 	MarshalJSON() ([]byte, error)
 	UnmarshalJSON(data []byte) error
+	HealthCheck() error
+	Save(w io.Writer) error
+	Load(reader io.Reader) error
+	Close() error
 }
 
-type CommonMetricRepository struct {
-	storage map[string]Metric
+type CommonMetricsRepository struct {
+	storage map[string]metrics.Metric
 	lock    sync.RWMutex
 }
 
-func (r *CommonMetricRepository) MarshalJSON() ([]byte, error) {
+func NewCommonMetricsRepository() *CommonMetricsRepository {
+	r := CommonMetricsRepository{storage: make(map[string]metrics.Metric)}
+	return &r
+}
+
+func (r *CommonMetricsRepository) HealthCheck() error {
+	return nil
+}
+
+func (r *CommonMetricsRepository) GetAll() ([]metrics.Metric, error) {
 	r.lock.RLock()
 	defer r.lock.RUnlock()
+	res := make([]metrics.Metric, 0, len(r.storage))
+	for _, m := range r.storage {
+		res = append(res, m)
+	}
 
-	return json.Marshal(r.storage)
+	return res, nil
 }
 
-func (r *CommonMetricRepository) UnmarshalJSON(data []byte) error {
-	r.lock.Lock()
-	defer r.lock.Unlock()
-	m := map[string]map[string]string{}
-	err := json.Unmarshal(data, &m)
-	return err
+func (r *CommonMetricsRepository) Close() error {
+	return nil
 }
 
-func (r *CommonMetricRepository) ForEachMetric(callback func(name string, m Metric) error) error {
+func (r *CommonMetricsRepository) AddMetricsBulk(metrics []metrics.Metric) error {
+	return errors.New("not implemented")
+}
+
+func (r *CommonMetricsRepository) AddOrUpdate(key string, val string, mtype string) (string, error) {
 	r.lock.Lock()
 	defer r.lock.Unlock()
-	for n, m := range r.storage {
-		err := callback(n, m)
+
+	if !metrics.IsValidMetricType(mtype) {
+		return "", errtypes.MakeBadDataError(fmt.Errorf("invalid metric type %v", mtype))
+	}
+
+	m, ok := r.storage[key]
+	if !ok {
+		m, err := metrics.NewMetric(key, val, mtype)
 		if err != nil {
-			return err
+			return "", errtypes.MakeBadDataError(err)
 		}
+		r.storage[key] = m
+		return val, nil
+	}
+
+	err := m.UpdateData(val)
+
+	if err != nil {
+		return "", errtypes.MakeBadDataError(err)
+	}
+
+	r.storage[key] = m
+
+	val, _ = m.GetData()
+
+	return val, nil
+}
+
+func (r *CommonMetricsRepository) MarshalJSON() ([]byte, error) {
+	r.lock.RLock()
+	defer r.lock.RUnlock()
+	allMetrics := make([]metrics.Metric, 0, len(r.storage))
+	for _, m := range r.storage {
+		allMetrics = append(allMetrics, m)
+	}
+	return json.Marshal(allMetrics)
+}
+
+func (r *CommonMetricsRepository) UnmarshalJSON(data []byte) error {
+	r.lock.Lock()
+	defer r.lock.Unlock()
+	allMetrics := make([]metrics.Metric, 0)
+	err := json.Unmarshal(data, &allMetrics)
+
+	if err != nil {
+		return err
+	}
+
+	for _, m := range allMetrics {
+		r.storage[m.ID] = m
 	}
 
 	return nil
 }
 
-func (r *CommonMetricRepository) Delete(key string) error {
+func (r *CommonMetricsRepository) Delete(key string) error {
 	r.lock.Lock()
 	defer r.lock.Unlock()
 	delete(r.storage, key)
 	return nil
 }
 
-func (r *CommonMetricRepository) Get(key string) (Metric, error) {
+func (r *CommonMetricsRepository) Get(key string, mtype string) (metrics.Metric, error) {
+	if !metrics.IsValidMetricType(mtype) {
+		return metrics.Metric{}, errtypes.MakeBadDataError(errors.New(fmt.Sprintf("invalid metric type '%v'", mtype)))
+	}
 	r.lock.RLock()
 	defer r.lock.RUnlock()
-	val, ok := r.storage[key]
-	if !ok {
-		return nil, fmt.Errorf("no metric for key %v", key)
+	m, ok := r.storage[key]
+	if !ok || m.MType != mtype {
+		return metrics.Metric{}, errtypes.MakeNotFoundError(errors.New(fmt.Sprintf("metric '%v' not found", key)))
 	}
 
-	return val, nil
+	return m, nil
 }
 
-type GaugeMetricRepository struct {
-	CommonMetricRepository
+func (r *CommonMetricsRepository) Save(w io.Writer) error {
+	return json.NewEncoder(w).Encode(&r)
 }
 
-func (r *GaugeMetricRepository) AddOrUpdate(key string, val string) error {
-	r.lock.Lock()
-	defer r.lock.Unlock()
-	return addOrUpdate(key, val, &GaugeMetric{}, r.storage)
-
-}
-
-func NewGaugeMetricRepository() *GaugeMetricRepository {
-	repo := GaugeMetricRepository{}
-	repo.storage = make(map[string]Metric)
-	return &repo
-}
-
-type CounterMetricRepository struct {
-	CommonMetricRepository
-}
-
-func (r *CounterMetricRepository) AddOrUpdate(key string, val string) error {
-	r.lock.Lock()
-	defer r.lock.Unlock()
-	return addOrUpdate(key, val, &CounterMetric{}, r.storage)
-}
-
-func addOrUpdate(key string, val string, m Metric, storage map[string]Metric) error {
-	v, ok := storage[key]
-	if !ok {
-		err := m.UpdateValue(val)
-		if err != nil {
-			return err
-		}
-		m.SetLastTimeUpdated(time.Now())
-		storage[key] = m
-	} else {
-		err := v.UpdateValue(val)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func NewCounterMetricRepository() *CounterMetricRepository {
-	repo := CounterMetricRepository{}
-	repo.storage = make(map[string]Metric)
-	return &repo
-}
-
-type MetricsStorage interface {
-	GetRepository(name string) (Repository, error)
-	AddRepository(name string, repo Repository) error
-	DeleteRepository(name string) error
-	ForEachRepository(func(name string, repo Repository) error) error
-	Save(w io.Writer) error
-	Load(w io.Reader) error
-}
-
-type CommonMetricsStorage struct {
-	storage map[string]Repository
-}
-
-func (s *CommonMetricsStorage) Save(w io.Writer) error {
-	return json.NewEncoder(w).Encode(s.storage)
-}
-
-func (s *CommonMetricsStorage) Load(r io.Reader) error {
-	m := map[string]map[string]string{}
+func (r *CommonMetricsRepository) Load(reader io.Reader) error {
 	b := bytes.Buffer{}
-	io.Copy(&b, r)
+	io.Copy(&b, reader)
 
-	err := json.Unmarshal(b.Bytes(), &m)
-	if err != nil {
-		return err
-	}
-
-	for storageName, metricsStorage := range m {
-		repo, err := s.GetRepository(storageName)
-		if err != nil {
-			return err
-		}
-		for metricName, metricValue := range metricsStorage {
-			err := repo.AddOrUpdate(metricName, metricValue)
-			if err != nil {
-				return err
-			}
-		}
-	}
-
-	return nil
-}
-
-func (s *CommonMetricsStorage) ForEachRepository(callback func(name string, repo Repository) error) error {
-	for n, r := range s.storage {
-		err := callback(n, r)
-
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func (s *CommonMetricsStorage) GetRepository(name string) (Repository, error) {
-	repo, ok := s.storage[name]
-	if !ok {
-		return nil, fmt.Errorf("repository '%v' doesn't exist", name)
-	}
-
-	return repo, nil
-}
-
-func (s *CommonMetricsStorage) AddRepository(name string, repo Repository) error {
-	s.storage[name] = repo
-	return nil
-}
-
-func (s *CommonMetricsStorage) DeleteRepository(name string) error {
-	delete(s.storage, name)
-	return nil
-}
-
-func NewCommonMetricsStorage() *CommonMetricsStorage {
-	storage := CommonMetricsStorage{storage: make(map[string]Repository)}
-	storage.AddRepository("gauge", NewGaugeMetricRepository())
-	storage.AddRepository("counter", NewCounterMetricRepository())
-	return &storage
+	return json.Unmarshal(b.Bytes(), &r)
 }

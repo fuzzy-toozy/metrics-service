@@ -12,6 +12,7 @@ import (
 type Config struct {
 	ServerAddress  string
 	ReportURL      string
+	ReportBulkURL  string
 	PollInterval   time.Duration
 	ReportInterval time.Duration
 }
@@ -24,6 +25,8 @@ func BuildConfig() (*Config, error) {
 
 	flag.StringVar(&c.ServerAddress, "a", "localhost:8080", "Server address")
 	flag.StringVar(&c.ReportURL, "u", "/update", "Server endpoint path")
+	flag.StringVar(&c.ReportBulkURL, "ub", "/updates", "Server endpoint path")
+
 	flag.Var(&pollInterval, "p", "Metrics polling interval(seconds)")
 	flag.Var(&reportInterval, "r", "Metrics report interval(seconds)")
 

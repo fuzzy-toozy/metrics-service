@@ -20,7 +20,7 @@ type Server struct {
 	httpServer        *http.Server
 	asyncStorageSaver *storage.PeriodicSaver
 	storageSaver      storage.StorageSaver
-	metricsStorage    storage.MetricsStorage
+	metricsStorage    storage.Repository
 	config            *config.Config
 	logger            logging.Logger
 }
@@ -36,12 +36,12 @@ func NewServer(logger logging.Logger) (*Server, error) {
 	s.config = config
 
 	if config.DatabaseConfig.UseDatabase {
-		s.metricsStorage, err = storage.NewPGMetricsStorage(config.DatabaseConfig)
+		s.metricsStorage, err = storage.NewPGMetricRepository(config.DatabaseConfig, storage.NewDefaultDBRetryExecutor())
 		if err != nil {
 			return nil, fmt.Errorf("failed to create metrics storage: %w", err)
 		}
 	} else {
-		s.metricsStorage = storage.NewCommonMetricsStorage()
+		s.metricsStorage = storage.NewCommonMetricsRepository()
 	}
 
 	registryHandler, err := handlers.NewDefaultMetricRegistryHandler(logger, s.metricsStorage, s.storageSaver, config.DatabaseConfig)
@@ -92,12 +92,17 @@ func (s *Server) Run() error {
 	stop := func() error {
 		err := s.httpServer.Shutdown(context.Background())
 		if err != nil {
-			err = fmt.Errorf("erver shutdown failed: %w", err)
+			err = fmt.Errorf("server shutdown failed: %w", err)
 		}
 
 		if s.asyncStorageSaver != nil {
 			s.asyncStorageSaver.Stop()
 		}
+
+		if err := s.metricsStorage.Close(); err != nil {
+			s.logger.Errorf("Failed to close metrics storage: %v", err)
+		}
+
 		return err
 	}
 
