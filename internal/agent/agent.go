@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +14,7 @@ import (
 	monitorHttp "github.com/fuzzy-toozy/metrics-service/internal/agent/http"
 	"github.com/fuzzy-toozy/metrics-service/internal/agent/monitor"
 	"github.com/fuzzy-toozy/metrics-service/internal/agent/monitor/metrics"
+	"github.com/fuzzy-toozy/metrics-service/internal/common"
 	"github.com/fuzzy-toozy/metrics-service/internal/log"
 )
 
@@ -33,14 +36,26 @@ func (a *Agent) ReportMetrics() error {
 	serverEndpoint = path.Clean(serverEndpoint)
 	serverEndpoint = strings.Trim(serverEndpoint, "/")
 	serverEndpoint = fmt.Sprintf("http://%v", serverEndpoint)
+	var buffer bytes.Buffer
 	return a.metricsMonitor.GetMetrics().ForEachMetric(func(metricName string, m metrics.Metric) error {
 		metricValue := m.GetValue()
 		metricType := m.GetType()
-		url := fmt.Sprintf("%v/%v/%v/%v", serverEndpoint, metricType, metricName, metricValue)
-		req, err := http.NewRequest(http.MethodPost, url, nil)
+		metricJSON := common.MetricJSON{ID: metricName, MType: metricType}
+
+		if err := metricJSON.SetData(metricValue); err != nil {
+			return fmt.Errorf("failed to set metric %v data to %v", metricName, metricValue)
+		}
+
+		buffer.Reset()
+		if err := json.NewEncoder(&buffer).Encode(metricJSON); err != nil {
+			return fmt.Errorf("failed to encode metric to JSON %v", err)
+		}
+
+		req, err := http.NewRequest(http.MethodPost, serverEndpoint, &buffer)
 		if err != nil {
 			return err
 		}
+		req.Header.Set("Content-Type", "application/json")
 		resp, err := a.httpClient.Send(req)
 
 		if resp != nil {
@@ -53,7 +68,7 @@ func (a *Agent) ReportMetrics() error {
 			}()
 
 			a.log.Debugf("Sent metric of type %v, name %v, value %v to %v. Status %v",
-				metricType, metricName, metricValue, url, resp.StatusCode)
+				metricType, metricName, metricValue, serverEndpoint, resp.StatusCode)
 
 			if resp.StatusCode != http.StatusOK {
 				err = fmt.Errorf("failed to send metric %v. Status code: %v", metricName, resp.StatusCode)

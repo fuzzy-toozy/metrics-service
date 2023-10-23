@@ -15,7 +15,7 @@ type GaugeMetric struct {
 }
 
 func (m *GaugeMetric) GetType() string {
-	return "gauge"
+	return common.MetricTypeGauge
 }
 
 func (m *GaugeMetric) UpdateValue(v Metric) {
@@ -28,7 +28,7 @@ type CounterMetric struct {
 }
 
 func (m *CounterMetric) GetType() string {
-	return "counter"
+	return common.MetricTypeCounter
 }
 
 func (m *CounterMetric) UpdateValue(v Metric) {
