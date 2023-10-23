@@ -24,7 +24,7 @@ type Config struct {
 func BuildConfig() (*Config, error) {
 	var c Config
 	c.DatabaseConfig.DriverName = "pgx"
-	c.DatabaseConfig.PingTimeout = 1 * time.Second
+	c.DatabaseConfig.PingTimeout = 2 * time.Second
 
 	defaultTimeout := 30 * time.Second
 	readTimeout := config.DurationOption{D: defaultTimeout}

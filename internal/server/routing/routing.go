@@ -39,6 +39,17 @@ func SetupRouting(h *handlers.MetricRegistryHandler) http.Handler {
 		})
 	})
 
+	r.Route("/updates", func(r chi.Router) {
+		handlerFunc := middleware.AllowContentType("application/json")
+		handler := handlerFunc(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			h.UpdateMetricsFromJSON(w, r)
+		}))
+
+		r.Post("/", func(w http.ResponseWriter, r *http.Request) {
+			handler.ServeHTTP(w, r)
+		})
+	})
+
 	r.Route("/value", func(r chi.Router) {
 		r.Get(fmt.Sprintf("/{%v}/{%v}", minfo.Type, minfo.Name), func(w http.ResponseWriter, r *http.Request) {
 			h.GetMetric(w, r)

@@ -3,6 +3,7 @@ package storage
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -96,10 +97,11 @@ func (m *CounterMetric) UpdateValue(v string) error {
 }
 
 type Repository interface {
-	AddOrUpdate(key string, val string) error
+	AddOrUpdate(key string, val string) (string, error)
 	Delete(key string) error
 	Get(key string) (Metric, error)
 	ForEachMetric(func(name string, m Metric) error) error
+	AddMetricsBulk(metrics []common.MetricJSON) error
 	MarshalJSON() ([]byte, error)
 	UnmarshalJSON(data []byte) error
 }
@@ -107,6 +109,10 @@ type Repository interface {
 type CommonMetricRepository struct {
 	storage map[string]Metric
 	lock    sync.RWMutex
+}
+
+func (r *CommonMetricRepository) AddMetricsBulk(metrics []common.MetricJSON) error {
+	return errors.New("not implemented")
 }
 
 func (r *CommonMetricRepository) MarshalJSON() ([]byte, error) {
@@ -159,7 +165,7 @@ type GaugeMetricRepository struct {
 	CommonMetricRepository
 }
 
-func (r *GaugeMetricRepository) AddOrUpdate(key string, val string) error {
+func (r *GaugeMetricRepository) AddOrUpdate(key string, val string) (string, error) {
 	r.lock.Lock()
 	defer r.lock.Unlock()
 	return addOrUpdate(key, val, &GaugeMetric{}, r.storage)
@@ -176,28 +182,31 @@ type CounterMetricRepository struct {
 	CommonMetricRepository
 }
 
-func (r *CounterMetricRepository) AddOrUpdate(key string, val string) error {
+func (r *CounterMetricRepository) AddOrUpdate(key string, val string) (string, error) {
 	r.lock.Lock()
 	defer r.lock.Unlock()
 	return addOrUpdate(key, val, &CounterMetric{}, r.storage)
 }
 
-func addOrUpdate(key string, val string, m Metric, storage map[string]Metric) error {
+func addOrUpdate(key string, val string, m Metric, storage map[string]Metric) (string, error) {
 	v, ok := storage[key]
 	if !ok {
 		err := m.UpdateValue(val)
 		if err != nil {
-			return err
+			return "", err
 		}
 		m.SetLastTimeUpdated(time.Now())
 		storage[key] = m
+
+		return m.GetValue(), nil
 	} else {
 		err := v.UpdateValue(val)
 		if err != nil {
-			return err
+			return "", err
 		}
+
+		return v.GetValue(), nil
 	}
-	return nil
 }
 
 func NewCounterMetricRepository() *CounterMetricRepository {
@@ -239,7 +248,7 @@ func (s *CommonMetricsStorage) Load(r io.Reader) error {
 			return err
 		}
 		for metricName, metricValue := range metricsStorage {
-			err := repo.AddOrUpdate(metricName, metricValue)
+			_, err := repo.AddOrUpdate(metricName, metricValue)
 			if err != nil {
 				return err
 			}
