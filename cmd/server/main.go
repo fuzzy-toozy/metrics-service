@@ -1,44 +1,21 @@
 package main
 
 import (
-	"context"
-
 	"github.com/fuzzy-toozy/metrics-service/internal/log"
 	"github.com/fuzzy-toozy/metrics-service/internal/server"
-	"github.com/fuzzy-toozy/metrics-service/internal/server/config"
-	"github.com/fuzzy-toozy/metrics-service/internal/server/handlers"
-	"github.com/fuzzy-toozy/metrics-service/internal/server/routing"
-	"github.com/fuzzy-toozy/metrics-service/internal/server/storage"
 )
 
 func main() {
+	// TODO: make application wrapper and move all this code there
 	logger := log.NewDevZapLogger()
-	config, err := config.BuildConfig()
+	server, err := server.NewServer(logger)
+
 	if err != nil {
-		logger.Fatalf("Failed to build server config: %v", err)
+		logger.Errorf("Failed to create server: %v", err)
 		return
 	}
-	metricsStorage := storage.NewCommonMetricsStorage()
-	registryHandler := handlers.NewDefaultMetricRegistryHandler(logger, metricsStorage)
-	routerHandler := routing.SetupRouting(registryHandler)
-	serverHandler := handlers.WithLogging(
-		handlers.WithCompression(routerHandler, logger),
-		logger)
 
-	s := server.NewDefaultHTTPServer(*config, logger, serverHandler)
-
-	err = server.Run(
-		func() error {
-			return s.ListenAndServe()
-		},
-		func() error {
-			err := s.Shutdown(context.Background())
-			if err != nil {
-				logger.Error("Shutdown failed. Reason: %v", err)
-			}
-			return err
-		},
-	)
+	err = server.Run()
 
 	if err != nil {
 		logger.Warnf("Stop reason: %v", err)

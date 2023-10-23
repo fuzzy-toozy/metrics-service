@@ -129,7 +129,7 @@ func TestMetricRegistryHandler_ServeHTTP(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			h := handlers.NewMetricRegistryHandler(registry, log.NewDevZapLogger(),
-				handlers.MetricURLInfo{Type: "mtype", Name: "mname", Value: "mval"})
+				handlers.MetricURLInfo{Type: "mtype", Name: "mname", Value: "mval"}, nil)
 			r := routing.SetupRouting(h)
 			r.ServeHTTP(tt.args.w, tt.args.r)
 			resp := tt.args.w.(*httptest.ResponseRecorder)
