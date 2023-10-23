@@ -3,107 +3,87 @@ package storage
 import (
 	"testing"
 
+	"github.com/fuzzy-toozy/metrics-service/internal/metrics"
 	"github.com/stretchr/testify/require"
 )
 
-func TestMetricsStorage(t *testing.T) {
-	storage := NewDeafultCommonMetricsStorage()
-	repoName := "GaugeRepo"
-
-	require.NoError(t, storage.AddRepository(repoName, NewGaugeMetricRepository()))
-
-	repo, err := storage.GetRepository("AbsentRepo")
-	require.Error(t, err)
-	require.Nil(t, repo)
-
-	repo, err = storage.GetRepository(repoName)
-	require.NoError(t, err)
-	require.NotNil(t, repo)
-
-	err = storage.DeleteRepository(repoName)
-	require.NoError(t, err)
-
-	repo, err = storage.GetRepository(repoName)
-	require.Error(t, err)
-	require.Nil(t, repo)
-}
-
 type MetricTestData struct {
-	metricName           string
-	metricInitialVal     string
-	metricUpdateVal      string
-	metricAfterUpdateVal string
-	invalidMetricVals    []string
-}
-
-func generalRepoTest(t *testing.T, repo Repository, data ...MetricTestData) {
-
-	for _, d := range data {
-		for _, v := range d.invalidMetricVals {
-			_, err := repo.AddOrUpdate(d.metricName, v)
-			require.Error(t, err)
-		}
-
-		updatedVal, err := repo.AddOrUpdate(d.metricName, d.metricInitialVal)
-		require.NoError(t, err)
-
-		metric, err := repo.Get(d.metricName)
-		require.NoError(t, err)
-		require.Equal(t, metric.GetValue(), updatedVal)
-		require.Equal(t, metric.GetValue(), d.metricInitialVal)
-
-		updatedVal, err = repo.AddOrUpdate(d.metricName, d.metricUpdateVal)
-		require.NoError(t, err)
-
-		metric, err = repo.Get(d.metricName)
-		require.NoError(t, err)
-		require.Equal(t, metric.GetValue(), updatedVal)
-		require.Equal(t, metric.GetValue(), d.metricAfterUpdateVal)
-
-		require.NoError(t, repo.Delete(d.metricName))
-
-		metric, err = repo.Get(d.metricName)
-		require.Error(t, err)
-		require.Nil(t, metric)
-
-		require.NoError(t, repo.Delete(d.metricName))
-	}
+	name              string
+	mtype             string
+	initialVal        string
+	updateVal         string
+	afterUpdateVal    string
+	invalidMetricVals []string
 }
 
 func TestMetricsRepo(t *testing.T) {
+	repo := NewCommonMetricsRepository()
 	data := []MetricTestData{
 		{
-			metricName:           "m1",
-			metricInitialVal:     "100",
-			metricUpdateVal:      "200",
-			metricAfterUpdateVal: "200",
-			invalidMetricVals:    []string{"inv"},
+			name:              "m1",
+			mtype:             metrics.GaugeMetricType,
+			initialVal:        "100",
+			updateVal:         "200",
+			afterUpdateVal:    "200",
+			invalidMetricVals: []string{"inv"},
 		},
 		{
-			metricName:           "m2",
-			metricInitialVal:     "9999",
-			metricUpdateVal:      "10000",
-			metricAfterUpdateVal: "10000",
-			invalidMetricVals:    []string{"vni"},
+			name:              "m2",
+			mtype:             metrics.GaugeMetricType,
+			initialVal:        "9999",
+			updateVal:         "10000",
+			afterUpdateVal:    "10000",
+			invalidMetricVals: []string{"vni"},
+		},
+		{
+			name:              "m1",
+			mtype:             metrics.CounterMetricType,
+			initialVal:        "100",
+			updateVal:         "200",
+			afterUpdateVal:    "300",
+			invalidMetricVals: []string{"inv, 20.20"},
+		},
+		{
+			name:              "m2",
+			mtype:             metrics.CounterMetricType,
+			initialVal:        "9999",
+			updateVal:         "10000",
+			afterUpdateVal:    "19999",
+			invalidMetricVals: []string{"vni, 9999.9999"},
 		},
 	}
-	generalRepoTest(t, NewGaugeMetricRepository(), data...)
 
-	data = []MetricTestData{
-		{
-			metricName:           "m1",
-			metricInitialVal:     "100",
-			metricUpdateVal:      "200",
-			metricAfterUpdateVal: "300",
-			invalidMetricVals:    []string{"inv, 20.20"},
-		},
-		{
-			metricName:           "m2",
-			metricInitialVal:     "9999",
-			metricUpdateVal:      "10000",
-			metricAfterUpdateVal: "19999",
-			invalidMetricVals:    []string{"vni, 9999.9999"},
-		},
+	for _, d := range data {
+		for _, v := range d.invalidMetricVals {
+			_, err := repo.AddOrUpdate(d.name, v, d.mtype)
+			require.Error(t, err)
+		}
+
+		updatedVal, err := repo.AddOrUpdate(d.name, d.initialVal, d.mtype)
+		require.NoError(t, err)
+
+		metric, err := repo.Get(d.name, d.mtype)
+		require.NoError(t, err)
+		data, err := metric.GetData()
+		require.NoError(t, err)
+		require.Equal(t, data, updatedVal)
+		require.Equal(t, data, d.initialVal)
+
+		updatedVal, err = repo.AddOrUpdate(d.name, d.updateVal, d.mtype)
+		require.NoError(t, err)
+
+		metric, err = repo.Get(d.name, d.mtype)
+		require.NoError(t, err)
+		data, err = metric.GetData()
+		require.NoError(t, err)
+		require.Equal(t, data, updatedVal)
+		require.Equal(t, data, d.afterUpdateVal)
+
+		require.NoError(t, repo.Delete(d.name))
+
+		metric, err = repo.Get(d.name, d.mtype)
+		require.Error(t, err)
+
+		require.NoError(t, repo.Delete(d.name))
 	}
-	generalRepoTest(t, NewCounterMetricRepository(), data...)
 }

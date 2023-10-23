@@ -13,7 +13,6 @@ import (
 	"github.com/fuzzy-toozy/metrics-service/internal/agent/config"
 	monitorHttp "github.com/fuzzy-toozy/metrics-service/internal/agent/http"
 	"github.com/fuzzy-toozy/metrics-service/internal/agent/monitor"
-	"github.com/fuzzy-toozy/metrics-service/internal/agent/monitor/metrics"
 	"github.com/fuzzy-toozy/metrics-service/internal/common"
 	"github.com/fuzzy-toozy/metrics-service/internal/compression"
 	"github.com/fuzzy-toozy/metrics-service/internal/log"
@@ -77,25 +76,7 @@ func (a *Agent) ReportMetricsBulk() error {
 	serverEndpoint = strings.Trim(serverEndpoint, "/")
 	serverEndpoint = fmt.Sprintf("http://%v", serverEndpoint)
 
-	metricsList := make([]common.MetricJSON, 0)
-
-	err := a.metricsMonitor.GetMetrics().ForEachMetric(func(metricName string, m metrics.Metric) error {
-		metricValue := m.GetValue()
-		metricType := m.GetType()
-		metricJSON := common.MetricJSON{ID: metricName, MType: metricType}
-
-		if err := metricJSON.SetData(metricValue); err != nil {
-			return fmt.Errorf("failed to set metric %v data to %v: %w", metricName, metricValue, err)
-		}
-
-		metricsList = append(metricsList, metricJSON)
-
-		return nil
-	})
-
-	if err != nil {
-		return fmt.Errorf("failed to gather metrics: %w", err)
-	}
+	metricsList := a.metricsMonitor.GetMetricsStorage().GetAllMetrics()
 
 	contentType := "application/json"
 	contentEncoding := ""
@@ -146,20 +127,13 @@ func (a *Agent) ReportMetrics() error {
 	serverEndpoint = path.Clean(serverEndpoint)
 	serverEndpoint = strings.Trim(serverEndpoint, "/")
 	serverEndpoint = fmt.Sprintf("http://%v", serverEndpoint)
-
-	return a.metricsMonitor.GetMetrics().ForEachMetric(func(metricName string, m metrics.Metric) error {
-		metricValue := m.GetValue()
-		metricType := m.GetType()
-		metricJSON := common.MetricJSON{ID: metricName, MType: metricType}
+	fmt.Println("Storage length:", len(a.metricsMonitor.GetMetricsStorage().GetAllMetrics()))
+	for _, m := range a.metricsMonitor.GetMetricsStorage().GetAllMetrics() {
 		contentType := "application/json"
 		contentEncoding := ""
 
-		if err := metricJSON.SetData(metricValue); err != nil {
-			return fmt.Errorf("failed to set metric %v data to %v: %w", metricName, metricValue, err)
-		}
-
 		a.buffer.Reset()
-		if err := json.NewEncoder(&a.buffer).Encode(metricJSON); err != nil {
+		if err := json.NewEncoder(&a.buffer).Encode(m); err != nil {
 			return fmt.Errorf("failed to encode metric to JSON: %w", err)
 		}
 
@@ -191,22 +165,26 @@ func (a *Agent) ReportMetrics() error {
 				resp.Body.Close()
 			}()
 
+			val, _ := m.GetData()
 			a.log.Debugf("Sent metric of type %v, name %v, value %v to %v. Status %v",
-				metricType, metricName, metricValue, serverEndpoint, resp.StatusCode)
+				m.MType, m.ID, val, serverEndpoint, resp.StatusCode)
 
 			if resp.StatusCode != http.StatusOK {
-				err = fmt.Errorf("failed to send metric %v. Status code: %v", metricName, resp.StatusCode)
+				err = fmt.Errorf("failed to send metric %v. Status code: %v", m.ID, resp.StatusCode)
 			}
 		}
 
-		return err
-	})
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (a *Agent) Run() {
 	ticker := time.NewTicker(10 * time.Second)
 	retryExecutor := common.NewCommonRetryExecutor(2*time.Second, 3, nil)
-
 	for {
 		select {
 		case <-time.After(2 * time.Second):
@@ -215,7 +193,6 @@ func (a *Agent) Run() {
 				a.log.Warnf("Failed to gather metrics. %v", err)
 			}
 		case <-ticker.C:
-
 			err := retryExecutor.RetryOnError(func() error {
 				return a.ReportMetricsBulk()
 			})
