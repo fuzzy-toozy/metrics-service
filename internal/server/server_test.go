@@ -123,9 +123,9 @@ func TestMetricRegistryHandler_ServeHTTP(t *testing.T) {
 		},
 	}
 
-	registry := storage.NewCommonMetricsStorage()
-	registry.AddRepository("gauge", storage.NewGaugeMetricRepository())
-	registry.AddRepository("counter", storage.NewCounterMetricRepository())
+	registry := storage.NewDeafultCommonMetricsStorage()
+	registry.AddRepository(common.MetricTypeGauge, storage.NewGaugeMetricRepository())
+	registry.AddRepository(common.MetricTypeCounter, storage.NewCounterMetricRepository())
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -1,8 +1,6 @@
 package handlers
 
 import (
-	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,8 +13,6 @@ import (
 	"github.com/fuzzy-toozy/metrics-service/internal/server/config"
 	"github.com/fuzzy-toozy/metrics-service/internal/server/storage"
 	"github.com/go-chi/chi"
-
-	_ "github.com/jackc/pgx/stdlib"
 )
 
 type MetricURLInfo struct {
@@ -34,30 +30,17 @@ type MetricRegistryHandler struct {
 	databaseConfig config.DBConfig
 }
 
-func (h *MetricRegistryHandler) checkDatabaseConnection() error {
-	conn, err := sql.Open(h.databaseConfig.DriverName, h.databaseConfig.ConnString)
+func (h *MetricRegistryHandler) HealthCheck(w http.ResponseWriter, r *http.Request) {
+	err := h.registry.HealthCheck()
 
 	if err != nil {
-		return err
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), h.databaseConfig.PingTimeout)
-
-	defer cancel()
-
-	return conn.PingContext(ctx)
-}
-
-func (h *MetricRegistryHandler) CheckDatabaseConnection(w http.ResponseWriter, r *http.Request) {
-	err := h.checkDatabaseConnection()
-
-	if err != nil {
-		h.log.Errorf("Failed to check db connection: %v", err)
+		h.log.Errorf("Failed to perform registry health check: %v", err)
 		http.Error(w, "Ping failed", http.StatusInternalServerError)
 		return
 	}
 
 	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("OK"))
 }
 
 func (h *MetricRegistryHandler) GetMetricURLInfo() MetricURLInfo {
