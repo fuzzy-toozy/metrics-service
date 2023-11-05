@@ -36,7 +36,7 @@ func NewServer(logger logging.Logger) (*Server, error) {
 	s.config = config
 
 	s.metricsStorage = storage.NewCommonMetricsStorage()
-	registryHandler := handlers.NewDefaultMetricRegistryHandler(logger, s.metricsStorage, s.storageSaver)
+	registryHandler := handlers.NewDefaultMetricRegistryHandler(logger, s.metricsStorage, s.storageSaver, config.DatabaseConfig)
 
 	if config.RestoreData {
 		f, err := os.OpenFile(config.StoreFilePath, os.O_RDONLY, 0444)
@@ -81,7 +81,7 @@ func (s *Server) Run() error {
 	stop := func() error {
 		err := s.httpServer.Shutdown(context.Background())
 		if err != nil {
-			err = fmt.Errorf("server shutdown failed: %w", err)
+			err = fmt.Errorf("erver shutdown failed: %w", err)
 		}
 
 		if s.asyncStorageSaver != nil {

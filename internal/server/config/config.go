@@ -11,17 +11,21 @@ import (
 )
 
 type Config struct {
-	ServerAddress string
-	StoreFilePath string
-	RestoreData   bool
-	ReadTimeout   time.Duration
-	WriteTimeout  time.Duration
-	IdleTimeout   time.Duration
-	StoreInterval time.Duration
+	ServerAddress  string
+	StoreFilePath  string
+	DatabaseConfig DBConfig
+	RestoreData    bool
+	ReadTimeout    time.Duration
+	WriteTimeout   time.Duration
+	IdleTimeout    time.Duration
+	StoreInterval  time.Duration
 }
 
 func BuildConfig() (*Config, error) {
 	var c Config
+	c.DatabaseConfig.DriverName = "pgx"
+	c.DatabaseConfig.PingTimeout = 1 * time.Second
+
 	defaultTimeout := 30 * time.Second
 	readTimeout := config.DurationOption{D: defaultTimeout}
 	writeTimeout := config.DurationOption{D: defaultTimeout}
@@ -29,6 +33,7 @@ func BuildConfig() (*Config, error) {
 	storeInterval := config.DurationOption{D: 300 * time.Second}
 
 	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
+	flag.StringVar(&c.DatabaseConfig.ConnString, "d", "", "Database connection string")
 	flag.StringVar(&c.ServerAddress, "a", "localhost:8080", "Address and port to bind server to")
 	flag.StringVar(&c.StoreFilePath, "f", "/tmp/metrics-db.json", "File to store metrics data to")
 	flag.BoolVar(&c.RestoreData, "r", true, "Restore data from previously stored values")
@@ -62,6 +67,7 @@ func (config *Config) parseEnvVariables() error {
 		StoreInterval string `env:"STORE_INTERVAL"`
 		StoragePath   string `env:"FILE_STORAGE_PATH"`
 		Restore       string `env:"RESTORE"`
+		DBConnStr     string `env:"DATABASE_DSN"`
 	}
 	ecfg := EnvConfig{}
 	err := env.Parse(&ecfg)
@@ -91,6 +97,10 @@ func (config *Config) parseEnvVariables() error {
 			return err
 		}
 		config.RestoreData = val
+	}
+
+	if len(ecfg.DBConnStr) > 0 {
+		config.DatabaseConfig.ConnString = ecfg.DBConnStr
 	}
 
 	return nil

@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -9,8 +11,11 @@ import (
 
 	"github.com/fuzzy-toozy/metrics-service/internal/common"
 	"github.com/fuzzy-toozy/metrics-service/internal/log"
+	"github.com/fuzzy-toozy/metrics-service/internal/server/config"
 	"github.com/fuzzy-toozy/metrics-service/internal/server/storage"
 	"github.com/go-chi/chi"
+
+	_ "github.com/jackc/pgx/stdlib"
 )
 
 type MetricURLInfo struct {
@@ -20,11 +25,38 @@ type MetricURLInfo struct {
 }
 
 type MetricRegistryHandler struct {
-	registry     storage.MetricsStorage
-	log          log.Logger
-	metricInfo   MetricURLInfo
-	allMetrics   *template.Template
-	storageSaver storage.StorageSaver
+	registry       storage.MetricsStorage
+	log            log.Logger
+	metricInfo     MetricURLInfo
+	allMetrics     *template.Template
+	storageSaver   storage.StorageSaver
+	databaseConfig config.DBConfig
+}
+
+func (h *MetricRegistryHandler) checkDatabaseConnection() error {
+	conn, err := sql.Open(h.databaseConfig.DriverName, h.databaseConfig.ConnString)
+
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), h.databaseConfig.PingTimeout)
+
+	defer cancel()
+
+	return conn.PingContext(ctx)
+}
+
+func (h *MetricRegistryHandler) CheckDatabaseConnection(w http.ResponseWriter, r *http.Request) {
+	err := h.checkDatabaseConnection()
+
+	if err != nil {
+		h.log.Errorf("Failed to check db connection: %v", err)
+		http.Error(w, "Ping failed", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
 }
 
 func (h *MetricRegistryHandler) GetMetricURLInfo() MetricURLInfo {
@@ -270,12 +302,12 @@ func (h *MetricRegistryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 }
 
 func NewMetricRegistryHandler(registry storage.MetricsStorage, logger log.Logger, minfo MetricURLInfo,
-	storageSaver storage.StorageSaver) *MetricRegistryHandler {
-	return &MetricRegistryHandler{registry: registry, log: logger, metricInfo: minfo, storageSaver: storageSaver}
+	storageSaver storage.StorageSaver, DBConfig config.DBConfig) *MetricRegistryHandler {
+	return &MetricRegistryHandler{registry: registry, log: logger, metricInfo: minfo, storageSaver: storageSaver, databaseConfig: DBConfig}
 }
 
 func NewDefaultMetricRegistryHandler(logger log.Logger, registry storage.MetricsStorage,
-	storageSaver storage.StorageSaver) *MetricRegistryHandler {
+	storageSaver storage.StorageSaver, DBConfig config.DBConfig) *MetricRegistryHandler {
 	registry.AddRepository("gauge", storage.NewGaugeMetricRepository())
 	registry.AddRepository("counter", storage.NewCounterMetricRepository())
 
@@ -285,5 +317,5 @@ func NewDefaultMetricRegistryHandler(logger log.Logger, registry storage.Metrics
 		Type:  "metricType",
 	}
 
-	return NewMetricRegistryHandler(registry, logger, minfo, storageSaver)
+	return NewMetricRegistryHandler(registry, logger, minfo, storageSaver, DBConfig)
 }
