@@ -104,11 +104,16 @@ type Repository interface {
 	AddMetricsBulk(metrics []common.MetricJSON) error
 	MarshalJSON() ([]byte, error)
 	UnmarshalJSON(data []byte) error
+	Release() error
 }
 
 type CommonMetricRepository struct {
 	storage map[string]Metric
 	lock    sync.RWMutex
+}
+
+func (r *CommonMetricRepository) Release() error {
+	return nil
 }
 
 func (r *CommonMetricRepository) AddMetricsBulk(metrics []common.MetricJSON) error {
@@ -215,6 +220,10 @@ func NewCounterMetricRepository() *CounterMetricRepository {
 	return &repo
 }
 
+type HealthChecker interface {
+	HealthCheck() error
+}
+
 type MetricsStorage interface {
 	GetRepository(name string) (Repository, error)
 	AddRepository(name string, repo Repository) error
@@ -222,14 +231,40 @@ type MetricsStorage interface {
 	ForEachRepository(func(name string, repo Repository) error) error
 	Save(w io.Writer) error
 	Load(w io.Reader) error
+	io.Closer
+	HealthChecker
+}
+
+type NopCloser struct {
+}
+
+func (c NopCloser) Close() error {
+	return nil
+}
+
+type NopHealthChecker struct {
+}
+
+func (c NopHealthChecker) HealthCheck() error {
+	return nil
 }
 
 type CommonMetricsStorage struct {
-	storage map[string]Repository
+	storage       map[string]Repository
+	closer        io.Closer
+	healthChecker HealthChecker
+}
+
+func (s *CommonMetricsStorage) HealthCheck() error {
+	return s.healthChecker.HealthCheck()
 }
 
 func (s *CommonMetricsStorage) Save(w io.Writer) error {
 	return json.NewEncoder(w).Encode(s.storage)
+}
+
+func (s *CommonMetricsStorage) Close() error {
+	return s.closer.Close()
 }
 
 func (s *CommonMetricsStorage) Load(r io.Reader) error {
@@ -285,13 +320,32 @@ func (s *CommonMetricsStorage) AddRepository(name string, repo Repository) error
 }
 
 func (s *CommonMetricsStorage) DeleteRepository(name string) error {
+	repo, err := s.GetRepository(name)
+	if err != nil {
+		return fmt.Errorf("repository with name '%v' doesn't exist", name)
+	}
+
+	err = repo.Release()
+
+	if err != nil {
+		return fmt.Errorf("failed to release repository '%v' resources: %w", name, err)
+	}
+
 	delete(s.storage, name)
 	return nil
 }
 
-func NewCommonMetricsStorage() *CommonMetricsStorage {
-	storage := CommonMetricsStorage{storage: make(map[string]Repository)}
-	storage.AddRepository("gauge", NewGaugeMetricRepository())
-	storage.AddRepository("counter", NewCounterMetricRepository())
+func NewCommonMetricsStorage(closer io.Closer, healhChecker HealthChecker) *CommonMetricsStorage {
+	storage := CommonMetricsStorage{storage: make(map[string]Repository), closer: closer}
+	storage.AddRepository(common.MetricTypeGauge, NewGaugeMetricRepository())
+	storage.AddRepository(common.MetricTypeCounter, NewCounterMetricRepository())
+	return &storage
+}
+
+func NewDeafultCommonMetricsStorage() *CommonMetricsStorage {
+	storage := CommonMetricsStorage{storage: make(map[string]Repository),
+		closer: NopCloser{}, healthChecker: NopHealthChecker{}}
+	storage.AddRepository(common.MetricTypeGauge, NewGaugeMetricRepository())
+	storage.AddRepository(common.MetricTypeCounter, NewCounterMetricRepository())
 	return &storage
 }

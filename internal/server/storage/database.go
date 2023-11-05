@@ -6,9 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/fuzzy-toozy/metrics-service/internal/common"
 	"github.com/fuzzy-toozy/metrics-service/internal/server/config"
+
+	"github.com/jackc/pgx"
+	_ "github.com/jackc/pgx/stdlib"
 )
 
 type MetricType int
@@ -19,13 +23,14 @@ const (
 )
 
 type PGQueryConfig struct {
+	deleteTable string
 	updateQuery string
 	deleteQuery string
 	getOneQuery string
 	getAllQuery string
 }
 
-func BuildPGConfig(tableName string) PGQueryConfig {
+func BuildPGQueryConfig(tableName string) PGQueryConfig {
 
 	updateQuery := "INSERT INTO %s (name, value)" +
 		" VALUES ($1, $2)" +
@@ -38,24 +43,28 @@ func BuildPGConfig(tableName string) PGQueryConfig {
 
 	deleteQuery := "DELETE from %s where name = $1 ORDER BY name"
 
+	deleteTableQuery := "DROP table %s"
+
 	config := PGQueryConfig{
 		updateQuery: fmt.Sprintf(updateQuery, tableName),
 		getOneQuery: fmt.Sprintf(getOneQuery, tableName),
 		getAllQuery: fmt.Sprintf(getAllQuery, tableName),
 		deleteQuery: fmt.Sprintf(deleteQuery, tableName),
+		deleteTable: fmt.Sprintf(deleteTableQuery, tableName),
 	}
 
 	return config
 }
 
 type PGMetricRepository struct {
-	dbConfig   config.DBConfig
-	metricType MetricType
-	config     PGQueryConfig
-	db         *sql.DB
+	dbConfig      config.DBConfig
+	metricType    MetricType
+	queryConfig   PGQueryConfig
+	db            *sql.DB
+	retryExecutor common.RetryExecutor
 }
 
-func NewPGMetricRepository(dbConfig config.DBConfig, metricType MetricType, db *sql.DB) (*PGMetricRepository, error) {
+func NewPGMetricRepository(dbConfig config.DBConfig, metricType MetricType, db *sql.DB, retryExecutor common.RetryExecutor) (*PGMetricRepository, error) {
 
 	var createTableQuery string
 	var tableName string
@@ -82,17 +91,40 @@ func NewPGMetricRepository(dbConfig config.DBConfig, metricType MetricType, db *
 	defer cancel()
 
 	_, err := db.ExecContext(ctx, createTableQuery)
-
 	if err != nil {
 		return nil, err
 	}
 
-	return &PGMetricRepository{dbConfig: dbConfig, metricType: metricType, config: BuildPGConfig(tableName), db: db}, nil
+	return &PGMetricRepository{dbConfig: dbConfig, metricType: metricType, queryConfig: BuildPGQueryConfig(tableName), db: db, retryExecutor: retryExecutor}, nil
 }
 
-func NewPGMetricsStorage(config config.DBConfig) (*CommonMetricsStorage, error) {
-	storage := CommonMetricsStorage{storage: make(map[string]Repository)}
+type dbCloser struct {
+	db *sql.DB
+}
 
+func (c dbCloser) Close() error {
+	return c.db.Close()
+}
+
+type dbHealthChecker struct {
+	db            *sql.DB
+	retryExecutor common.RetryExecutor
+	timeout       time.Duration
+}
+
+func (c dbHealthChecker) HealthCheck() error {
+	work := func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
+
+		defer cancel()
+
+		return c.db.PingContext(ctx)
+	}
+
+	return c.retryExecutor.RetryOnError(work)
+}
+
+func NewPGMetricsStorage(config config.DBConfig, retryExecutor common.RetryExecutor) (*CommonMetricsStorage, error) {
 	genericError := "failed to create postgres metrics storage: %w"
 
 	db, err := sql.Open(config.DriverName, config.ConnString)
@@ -100,19 +132,22 @@ func NewPGMetricsStorage(config config.DBConfig) (*CommonMetricsStorage, error) 
 		return nil, fmt.Errorf(genericError, fmt.Errorf("failed to open database: %w", err))
 	}
 
-	repo, err := NewPGMetricRepository(config, Gauge, db)
+	storage := CommonMetricsStorage{storage: make(map[string]Repository), closer: dbCloser{db: db},
+		healthChecker: dbHealthChecker{db: db, retryExecutor: retryExecutor, timeout: config.PingTimeout}}
+
+	repo, err := NewPGMetricRepository(config, Gauge, db, retryExecutor)
 	if err != nil {
 		return nil, fmt.Errorf(genericError, fmt.Errorf("failed to create gauge metrics repository: %w", err))
 	}
 
-	storage.AddRepository("gauge", repo)
+	storage.AddRepository(common.MetricTypeGauge, repo)
 
-	repo, err = NewPGMetricRepository(config, Counter, db)
+	repo, err = NewPGMetricRepository(config, Counter, db, retryExecutor)
 	if err != nil {
 		return nil, fmt.Errorf(genericError, fmt.Errorf("failed to create counter metrics repository: %w", err))
 	}
 
-	storage.AddRepository("counter", repo)
+	storage.AddRepository(common.MetricTypeCounter, repo)
 
 	return &storage, nil
 }
@@ -125,9 +160,12 @@ type RowQuery interface {
 }
 
 func (r *PGMetricRepository) getCounterIncDelta(ctx context.Context, db RowQuery, name string, val string) (string, error) {
-	res := db.QueryRowContext(ctx, r.config.getOneQuery, name)
+	res := db.QueryRowContext(ctx, r.queryConfig.getOneQuery, name)
 	var counterVal int64
-	err := res.Scan(&counterVal)
+
+	err := r.retryExecutor.RetryOnError(func() error {
+		return res.Scan(&counterVal)
+	})
 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -148,120 +186,145 @@ func (r *PGMetricRepository) getCounterIncDelta(ctx context.Context, db RowQuery
 }
 
 func (r *PGMetricRepository) AddMetricsBulk(metrics []common.MetricJSON) error {
-	tx, err := r.db.Begin()
+	work := func() error {
+		tx, err := r.db.Begin()
 
-	if err != nil {
-		return DatabaseError(fmt.Errorf("failed to begin transaction: %w", err))
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), r.dbConfig.PingTimeout)
-	defer cancel()
-
-	stmt, err := tx.PrepareContext(ctx, r.config.updateQuery)
-
-	if err != nil {
-		tx.Rollback()
-		return DatabaseError(fmt.Errorf("failed to prepare query %v: %w", r.config.updateQuery, err))
-	}
-
-	defer stmt.Close()
-
-	for i, m := range metrics {
-		val, err := m.GetData()
 		if err != nil {
-			return BadDataError(fmt.Errorf("failed go get metric %v value: %w", m.ID, err))
+			return DatabaseError(fmt.Errorf("failed to begin transaction: %w", err))
 		}
 
-		updateVal := val
-		if r.metricType == Counter {
-			updateVal, err = r.getCounterIncDelta(ctx, tx, m.ID, val)
+		defer tx.Rollback()
+
+		ctx, cancel := context.WithTimeout(context.Background(), r.dbConfig.PingTimeout)
+		defer cancel()
+
+		stmt, err := tx.PrepareContext(ctx, r.queryConfig.updateQuery)
+
+		if err != nil {
+			return DatabaseError(fmt.Errorf("failed to prepare query %v: %w", r.queryConfig.updateQuery, err))
+		}
+
+		defer stmt.Close()
+
+		for i, m := range metrics {
+			val, err := m.GetData()
 			if err != nil {
-				return DatabaseError(err)
+				return BadDataError(fmt.Errorf("failed go get metric %v value: %w", m.ID, err))
 			}
+
+			updateVal := val
+			if r.metricType == Counter {
+				updateVal, err = r.getCounterIncDelta(ctx, tx, m.ID, val)
+				if err != nil {
+					return DatabaseError(err)
+				}
+			}
+
+			_, err = stmt.ExecContext(ctx, m.ID, updateVal)
+
+			if err != nil {
+				return DatabaseError(fmt.Errorf("failed to execute query %v for metric %v: %w", r.queryConfig.updateQuery, m.ID, err))
+			}
+
+			metrics[i].SetData(updateVal)
 		}
 
-		_, err = stmt.ExecContext(ctx, m.ID, updateVal)
+		err = tx.Commit()
 
 		if err != nil {
-			tx.Rollback()
-			return DatabaseError(fmt.Errorf("failed to execute query %v for metric %v: %w", r.config.updateQuery, m.ID, err))
+			return DatabaseError(fmt.Errorf("failed to commit metrics update: %w", err))
 		}
 
-		metrics[i].SetData(updateVal)
+		return nil
 	}
 
-	err = tx.Commit()
-
-	if err != nil {
-		return DatabaseError(fmt.Errorf("failed to commit metrics update: %w", err))
-	}
-
-	return nil
+	return r.retryExecutor.RetryOnError(work)
 }
 
 func (r *PGMetricRepository) AddOrUpdate(key string, val string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), r.dbConfig.PingTimeout)
-	defer cancel()
+	var updateValOut *string
+	work := func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), r.dbConfig.PingTimeout)
+		defer cancel()
 
-	updateVal := val
-	var err error
-	if r.metricType == Counter {
-		updateVal, err = r.getCounterIncDelta(ctx, r.db, key, val)
-		if err != nil {
-			return "", err
+		updateVal := val
+		updateValOut = &updateVal
+		var err error
+		if r.metricType == Counter {
+			updateVal, err = r.getCounterIncDelta(ctx, r.db, key, val)
+			if err != nil {
+				return err
+			}
 		}
+
+		_, err = r.db.ExecContext(ctx, r.queryConfig.updateQuery, key, updateVal)
+
+		if err != nil {
+			return fmt.Errorf("failed to execute add/update query %v: %w", r.queryConfig.updateQuery, err)
+		}
+
+		return nil
 	}
 
-	_, err = r.db.ExecContext(ctx, r.config.updateQuery, key, updateVal)
-
+	err := r.retryExecutor.RetryOnError(work)
 	if err != nil {
-		return "", fmt.Errorf("failed to execute add/update query %v: %w", r.config.updateQuery, err)
+		return "", nil
 	}
 
-	return updateVal, nil
+	return *updateValOut, nil
 }
 
 func (r *PGMetricRepository) Delete(key string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), r.dbConfig.PingTimeout)
-	defer cancel()
+	work := func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), r.dbConfig.PingTimeout)
+		defer cancel()
 
-	_, err := r.db.ExecContext(ctx, r.config.deleteQuery, key)
+		_, err := r.db.ExecContext(ctx, r.queryConfig.deleteQuery, key)
 
-	if err != nil {
-		return fmt.Errorf("failed to delete metirc: %w", err)
+		if err != nil {
+			return fmt.Errorf("failed to delete metirc: %w", err)
+		}
+
+		return nil
 	}
 
-	return nil
+	return r.retryExecutor.RetryOnError(work)
 }
 
 func (r *PGMetricRepository) Get(key string) (Metric, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), r.dbConfig.PingTimeout)
-	defer cancel()
+	var metricOut Metric
+	work := func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), r.dbConfig.PingTimeout)
+		defer cancel()
 
-	res := r.db.QueryRowContext(ctx, r.config.getOneQuery, key)
+		res := r.db.QueryRowContext(ctx, r.queryConfig.getOneQuery, key)
 
-	var metricValue any
-	var getMetric func(value any) Metric
+		var metricValue any
+		var getMetric func(value any) Metric
 
-	if r.metricType == Counter {
-		metricValue = new(int64)
-		getMetric = func(value any) Metric {
-			v := common.Int{Val: *value.(*int64)}
-			return &CounterMetric{Int: v}
+		if r.metricType == Counter {
+			metricValue = new(int64)
+			getMetric = func(value any) Metric {
+				v := common.Int{Val: *value.(*int64)}
+				return &CounterMetric{Int: v}
+			}
+		} else if r.metricType == Gauge {
+			metricValue = new(float64)
+			getMetric = func(value any) Metric {
+				v := common.Float{Val: *value.(*float64)}
+				return &GaugeMetric{Float: v}
+			}
 		}
-	} else if r.metricType == Gauge {
-		metricValue = new(float64)
-		getMetric = func(value any) Metric {
-			v := common.Float{Val: *value.(*float64)}
-			return &GaugeMetric{Float: v}
+
+		if err := res.Scan(metricValue); err != nil {
+			return fmt.Errorf("failed to extract data from query: %w", err)
 		}
+
+		metricOut = getMetric(metricValue)
+		return nil
 	}
 
-	if err := res.Scan(metricValue); err != nil {
-		return nil, fmt.Errorf("failed to extract data from query: %w", err)
-	}
-
-	return getMetric(metricValue), nil
+	return metricOut, r.retryExecutor.RetryOnError(work)
 }
 
 func getMetric(val string, mtype MetricType) (Metric, error) {
@@ -282,45 +345,49 @@ func getMetric(val string, mtype MetricType) (Metric, error) {
 }
 
 func (r *PGMetricRepository) ForEachMetric(callback func(name string, m Metric) error) error {
-	ctx, cancel := context.WithTimeout(context.Background(), r.dbConfig.PingTimeout)
-	defer cancel()
+	work := func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), r.dbConfig.PingTimeout)
+		defer cancel()
 
-	row, err := r.db.QueryContext(ctx, r.config.getAllQuery)
-
-	if err != nil {
-		return fmt.Errorf("failed to query all repo metrics: %w", err)
-	}
-
-	defer row.Close()
-
-	for row.Next() {
-		var name string
-		var value string
-
-		err := row.Scan(&name, &value)
+		row, err := r.db.QueryContext(ctx, r.queryConfig.getAllQuery)
 
 		if err != nil {
-			return fmt.Errorf("failed to get metric value: %w", err)
+			return fmt.Errorf("failed to query all repo metrics: %w", err)
 		}
 
-		metric, err := getMetric(value, r.metricType)
+		defer row.Close()
 
-		if err != nil {
-			return fmt.Errorf("failed to create metric from value %v: %w", value, err)
+		for row.Next() {
+			var name string
+			var value string
+
+			err := row.Scan(&name, &value)
+
+			if err != nil {
+				return fmt.Errorf("failed to get metric value: %w", err)
+			}
+
+			metric, err := getMetric(value, r.metricType)
+
+			if err != nil {
+				return fmt.Errorf("failed to create metric from value %v: %w", value, err)
+			}
+
+			err = callback(name, metric)
+
+			if err != nil {
+				return fmt.Errorf("user function failed for metric %v with value %v: %w", name, value, err)
+			}
 		}
 
-		err = callback(name, metric)
-
-		if err != nil {
-			return fmt.Errorf("user function failed for metric %v with value %v: %w", name, value, err)
+		if err = row.Err(); err != nil {
+			return fmt.Errorf("failed to iterate all metrics: %w", err)
 		}
+
+		return nil
 	}
 
-	if err = row.Err(); err != nil {
-		return fmt.Errorf("failed to iterate all metrics: %w", err)
-	}
-
-	return nil
+	return r.retryExecutor.RetryOnError(work)
 }
 
 func (r *PGMetricRepository) MarshalJSON() ([]byte, error) {
@@ -329,4 +396,33 @@ func (r *PGMetricRepository) MarshalJSON() ([]byte, error) {
 
 func (r *PGMetricRepository) UnmarshalJSON(data []byte) error {
 	return errors.New("not implemented")
+}
+
+func (r *PGMetricRepository) Release() error {
+
+	work := func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), r.dbConfig.PingTimeout)
+		defer cancel()
+
+		_, err := r.db.ExecContext(ctx, r.queryConfig.deleteTable)
+
+		if err != nil {
+			return err
+		}
+
+		return nil
+	}
+
+	return r.retryExecutor.RetryOnError(func() error {
+		return work()
+	})
+}
+
+func NewDefaultDBRetryExecutor() *common.CommonRetryExecutor {
+	errs := []error{
+		pgx.ErrDeadConn,
+		pgx.ErrAcquireTimeout,
+		context.DeadlineExceeded,
+	}
+	return common.NewCommonRetryExecutor(2*time.Second, 3, errs)
 }

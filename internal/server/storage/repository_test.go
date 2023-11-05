@@ -7,7 +7,7 @@ import (
 )
 
 func TestMetricsStorage(t *testing.T) {
-	storage := NewCommonMetricsStorage()
+	storage := NewDeafultCommonMetricsStorage()
 	repoName := "GaugeRepo"
 
 	require.NoError(t, storage.AddRepository(repoName, NewGaugeMetricRepository()))

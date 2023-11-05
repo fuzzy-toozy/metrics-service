@@ -205,6 +205,8 @@ func (a *Agent) ReportMetrics() error {
 
 func (a *Agent) Run() {
 	ticker := time.NewTicker(10 * time.Second)
+	retryExecutor := common.NewCommonRetryExecutor(2*time.Second, 3, nil)
+
 	for {
 		select {
 		case <-time.After(2 * time.Second):
@@ -213,11 +215,16 @@ func (a *Agent) Run() {
 				a.log.Warnf("Failed to gather metrics. %v", err)
 			}
 		case <-ticker.C:
-			err := a.ReportMetricsBulk()
+
+			err := retryExecutor.RetryOnError(func() error {
+				return a.ReportMetricsBulk()
+			})
 			if err != nil {
 				a.log.Warnf("Failed to report metrics bulk. %v", err)
 			}
-			err = a.ReportMetrics()
+			err = retryExecutor.RetryOnError(func() error {
+				return a.ReportMetrics()
+			})
 			if err != nil {
 				a.log.Warnf("Failed to report metrics. %v", err)
 			}

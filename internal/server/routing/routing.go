@@ -15,7 +15,7 @@ func SetupRouting(h *handlers.MetricRegistryHandler) http.Handler {
 
 	r.Route("/ping", func(r chi.Router) {
 		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			h.CheckDatabaseConnection(w, r)
+			h.HealthCheck(w, r)
 		})
 
 		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
