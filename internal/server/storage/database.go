@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 
 	"github.com/fuzzy-toozy/metrics-service/internal/common"
 	"github.com/fuzzy-toozy/metrics-service/internal/server/config"
@@ -116,16 +117,108 @@ func NewPGMetricsStorage(config config.DBConfig) (*CommonMetricsStorage, error) 
 	return &storage, nil
 }
 
-func (r *PGMetricRepository) AddOrUpdate(key string, val string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), r.dbConfig.PingTimeout)
-	defer cancel()
-	_, err := r.db.ExecContext(ctx, r.config.updateQuery, key, val)
+type BadDataError error
+type DatabaseError error
+
+type RowQuery interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+func (r *PGMetricRepository) getCounterIncDelta(ctx context.Context, db RowQuery, name string, val string) (string, error) {
+	res := db.QueryRowContext(ctx, r.config.getOneQuery, name)
+	var counterVal int64
+	err := res.Scan(&counterVal)
 
 	if err != nil {
-		return fmt.Errorf("failed to execute add/update query %v: %w", r.config.updateQuery, err)
+		if errors.Is(err, sql.ErrNoRows) {
+			return val, nil
+		}
+		return "", err
+	}
+
+	delta, err := strconv.ParseInt(val, 10, 64)
+
+	if err != nil {
+		return "", err
+	}
+
+	counterVal += delta
+
+	return strconv.FormatInt(counterVal, 10), nil
+}
+
+func (r *PGMetricRepository) AddMetricsBulk(metrics []common.MetricJSON) error {
+	tx, err := r.db.Begin()
+
+	if err != nil {
+		return DatabaseError(fmt.Errorf("failed to begin transaction: %w", err))
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), r.dbConfig.PingTimeout)
+	defer cancel()
+
+	stmt, err := tx.PrepareContext(ctx, r.config.updateQuery)
+
+	if err != nil {
+		tx.Rollback()
+		return DatabaseError(fmt.Errorf("failed to prepare query %v: %w", r.config.updateQuery, err))
+	}
+
+	defer stmt.Close()
+
+	for i, m := range metrics {
+		val, err := m.GetData()
+		if err != nil {
+			return BadDataError(fmt.Errorf("failed go get metric %v value: %w", m.ID, err))
+		}
+
+		updateVal := val
+		if r.metricType == Counter {
+			updateVal, err = r.getCounterIncDelta(ctx, tx, m.ID, val)
+			if err != nil {
+				return DatabaseError(err)
+			}
+		}
+
+		_, err = stmt.ExecContext(ctx, m.ID, updateVal)
+
+		if err != nil {
+			tx.Rollback()
+			return DatabaseError(fmt.Errorf("failed to execute query %v for metric %v: %w", r.config.updateQuery, m.ID, err))
+		}
+
+		metrics[i].SetData(updateVal)
+	}
+
+	err = tx.Commit()
+
+	if err != nil {
+		return DatabaseError(fmt.Errorf("failed to commit metrics update: %w", err))
 	}
 
 	return nil
+}
+
+func (r *PGMetricRepository) AddOrUpdate(key string, val string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), r.dbConfig.PingTimeout)
+	defer cancel()
+
+	updateVal := val
+	var err error
+	if r.metricType == Counter {
+		updateVal, err = r.getCounterIncDelta(ctx, r.db, key, val)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	_, err = r.db.ExecContext(ctx, r.config.updateQuery, key, updateVal)
+
+	if err != nil {
+		return "", fmt.Errorf("failed to execute add/update query %v: %w", r.config.updateQuery, err)
+	}
+
+	return updateVal, nil
 }
 
 func (r *PGMetricRepository) Delete(key string) error {

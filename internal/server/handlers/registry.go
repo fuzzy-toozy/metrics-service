@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -126,7 +127,6 @@ func (h *MetricRegistryHandler) GetMetricJSON(w http.ResponseWriter, r *http.Req
 	w.Header().Add("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(receivedData)
-
 }
 
 func (h *MetricRegistryHandler) GetAllMetrics(w http.ResponseWriter, r *http.Request) {
@@ -194,7 +194,7 @@ func (h *MetricRegistryHandler) updateMetric(mtype, mname, mvalue string) (metri
 		return "", http.StatusBadRequest, fmt.Errorf("failed to get repository for metric: %v: %w", mtype, err)
 	}
 
-	err = repo.AddOrUpdate(mname, mvalue)
+	updatedVal, err := repo.AddOrUpdate(mname, mvalue)
 
 	if err != nil {
 		return "", http.StatusBadRequest, fmt.Errorf("failed to add/update metric %v with value %v: %w", mname, mvalue, err)
@@ -207,7 +207,7 @@ func (h *MetricRegistryHandler) updateMetric(mtype, mname, mvalue string) (metri
 		}
 	}
 
-	return mvalue, http.StatusOK, nil
+	return updatedVal, http.StatusOK, nil
 }
 
 func (h *MetricRegistryHandler) UpdateMetric(w http.ResponseWriter, r *http.Request) {
@@ -223,6 +223,95 @@ func (h *MetricRegistryHandler) UpdateMetric(w http.ResponseWriter, r *http.Requ
 
 	w.WriteHeader(status)
 	w.Write([]byte(value))
+}
+
+func (h *MetricRegistryHandler) updateMetricsFromJSON(metrics []common.MetricJSON, mtype string) error {
+	repo, err := h.registry.GetRepository(mtype)
+	if err != nil {
+		return fmt.Errorf("failed to get repository for metric: %v: %w", mtype, err)
+	}
+
+	err = repo.AddMetricsBulk(metrics)
+
+	if err != nil {
+		return fmt.Errorf("failed to get add metrics of type: %v: %w", mtype, err)
+	}
+
+	return nil
+}
+
+func (h *MetricRegistryHandler) gatherMetrics(metrics []common.MetricJSON, metricsSet map[string]common.MetricJSON) {
+	for _, m := range metrics {
+		metricsSet[m.ID] = m
+	}
+}
+
+func (h *MetricRegistryHandler) UpdateMetricsFromJSON(w http.ResponseWriter, r *http.Request) {
+	receivedData := make([]common.MetricJSON, 0)
+
+	if err := json.NewDecoder(r.Body).Decode(&receivedData); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		h.log.Debugf("Failed to decode JSON data: %v", err)
+		w.Write([]byte("Bad metric format"))
+		return
+	}
+
+	gaugeMetrics := make([]common.MetricJSON, 0)
+	counterMetrics := make([]common.MetricJSON, 0)
+
+	for _, m := range receivedData {
+		currentMetricType := strings.ToLower(m.MType)
+		if currentMetricType == common.MetricTypeGauge {
+			gaugeMetrics = append(gaugeMetrics, m)
+		} else if currentMetricType == common.MetricTypeCounter {
+			counterMetrics = append(counterMetrics, m)
+		}
+	}
+
+	onUpdateError := func(mtype string, err error) {
+		h.log.Errorf("failed to get add metrics of type: %v: %v", mtype, err)
+		var status int
+		var dbErr storage.DatabaseError
+		var dataErr storage.BadDataError
+		if errors.As(err, &dbErr) {
+			status = http.StatusInternalServerError
+		} else if errors.As(err, &dataErr) {
+			status = http.StatusBadRequest
+		}
+
+		http.Error(w, "", status)
+	}
+
+	err := h.updateMetricsFromJSON(gaugeMetrics, common.MetricTypeGauge)
+	if err != nil {
+		onUpdateError(common.MetricTypeGauge, err)
+		return
+	}
+
+	err = h.updateMetricsFromJSON(counterMetrics, common.MetricTypeCounter)
+	if err != nil {
+		onUpdateError(common.MetricTypeCounter, err)
+		return
+	}
+
+	respMetrics := make([]common.MetricJSON, 0, len(gaugeMetrics)+len(counterMetrics))
+	respMetrics = append(respMetrics, gaugeMetrics...)
+	respMetrics = append(respMetrics, counterMetrics...)
+
+	respMetricsSet := make(map[string]common.MetricJSON, len(gaugeMetrics)+len(counterMetrics))
+
+	h.gatherMetrics(respMetrics, respMetricsSet)
+	respMetrics = respMetrics[:len(respMetricsSet)]
+
+	idx := 0
+	for _, m := range respMetricsSet {
+		respMetrics[idx] = m
+		idx++
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(respMetrics)
 }
 
 func (h *MetricRegistryHandler) UpdateMetricFromJSON(w http.ResponseWriter, r *http.Request) {
@@ -253,6 +342,7 @@ func (h *MetricRegistryHandler) UpdateMetricFromJSON(w http.ResponseWriter, r *h
 	} else {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
+		receivedData.SetData(value)
 		json.NewEncoder(w).Encode(receivedData)
 	}
 }
@@ -282,7 +372,7 @@ func (h *MetricRegistryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	err = repo.AddOrUpdate(metricName, metricValue)
+	updatedVal, err := repo.AddOrUpdate(metricName, metricValue)
 
 	if err != nil {
 		h.log.Debugf("Bad metric value: %v. %v", metricValue, err)
@@ -291,9 +381,8 @@ func (h *MetricRegistryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 	}
 
 	w.WriteHeader(http.StatusOK)
-	m, _ := repo.Get(metricName)
 	logStr := fmt.Sprintf("Metric type '%v', name: '%v', value: '%v' updated. New value: '%v'",
-		metricType, metricName, metricValue, m.GetValue())
+		metricType, metricName, metricValue, updatedVal)
 	h.log.Debugf(logStr)
 	w.Write([]byte(logStr))
 }

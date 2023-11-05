@@ -95,7 +95,7 @@ var metricsGatherCallbacks []func(*runtime.MemStats, storage.MetricsStorage) err
 		return s.AddOrUpdate("RandomValue", metrics.NewGaugeMeric(float64(rand.Intn(999999))))
 	},
 	func(m *runtime.MemStats, s storage.MetricsStorage) error {
-		return s.AddOrUpdate("PollCount", metrics.NewCounterMeric(1))
+		return s.AddOrUpdate("PollCount", metrics.NewCounterMeric(120))
 	},
 }
 

@@ -40,19 +40,24 @@ func generalRepoTest(t *testing.T, repo Repository, data ...MetricTestData) {
 
 	for _, d := range data {
 		for _, v := range d.invalidMetricVals {
-			require.Error(t, repo.AddOrUpdate(d.metricName, v))
+			_, err := repo.AddOrUpdate(d.metricName, v)
+			require.Error(t, err)
 		}
 
-		require.NoError(t, repo.AddOrUpdate(d.metricName, d.metricInitialVal))
+		updatedVal, err := repo.AddOrUpdate(d.metricName, d.metricInitialVal)
+		require.NoError(t, err)
 
 		metric, err := repo.Get(d.metricName)
 		require.NoError(t, err)
+		require.Equal(t, metric.GetValue(), updatedVal)
 		require.Equal(t, metric.GetValue(), d.metricInitialVal)
 
-		require.NoError(t, repo.AddOrUpdate(d.metricName, d.metricUpdateVal))
+		updatedVal, err = repo.AddOrUpdate(d.metricName, d.metricUpdateVal)
+		require.NoError(t, err)
 
 		metric, err = repo.Get(d.metricName)
 		require.NoError(t, err)
+		require.Equal(t, metric.GetValue(), updatedVal)
 		require.Equal(t, metric.GetValue(), d.metricAfterUpdateVal)
 
 		require.NoError(t, repo.Delete(d.metricName))
