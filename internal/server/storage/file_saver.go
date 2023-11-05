@@ -23,7 +23,7 @@ type PeriodicSaver struct {
 type FileSaver struct {
 	logger         logging.Logger
 	fileName       string
-	metricsStorage MetricsStorage
+	metricsStorage Repository
 }
 
 func (s *FileSaver) Save() error {
@@ -78,7 +78,7 @@ func NewPeriodicSaver(period time.Duration, log logging.Logger, storageSaver Sto
 	return &PeriodicSaver{period: period, done: make(chan struct{}), log: log, storageSaver: storageSaver}
 }
 
-func NewFileSaver(m MetricsStorage, fileName string, log logging.Logger) *FileSaver {
+func NewFileSaver(m Repository, fileName string, log logging.Logger) *FileSaver {
 	s := FileSaver{logger: log, fileName: fileName, metricsStorage: m}
 	return &s
 }

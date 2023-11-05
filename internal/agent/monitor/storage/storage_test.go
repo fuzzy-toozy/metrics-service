@@ -1,10 +1,9 @@
 package storage
 
 import (
-	"strconv"
 	"testing"
 
-	"github.com/fuzzy-toozy/metrics-service/internal/agent/monitor/metrics"
+	"github.com/fuzzy-toozy/metrics-service/internal/metrics"
 	"github.com/stretchr/testify/require"
 )
 
@@ -17,30 +16,18 @@ func TestMetricsStorage(t *testing.T) {
 	}
 
 	for n, v := range gaugeMetrics {
-		require.NoError(t, storage.AddOrUpdate(n, metrics.NewGaugeMeric(v)))
+		require.NoError(t, storage.AddOrUpdate(metrics.NewGaugeMetric(n, v)))
 	}
 
-	require.NoError(t, storage.ForEachMetric(func(name string, m metrics.Metric) error {
-		v, ok := gaugeMetrics[name]
+	for _, m := range storage.GetAllMetrics() {
+		v, ok := gaugeMetrics[m.ID]
 		require.True(t, ok)
-		g, ok := m.(*metrics.GaugeMetric)
-		require.True(t, ok)
-		require.Equal(t, v, g.Val)
-
-		newVal := v + v
-		m.UpdateValue(metrics.NewGaugeMeric(newVal))
-
-		require.Equal(t, newVal, g.Val)
-		sVal := strconv.FormatFloat(g.Val, 'f', -1, 64)
-		require.Equal(t, sVal, m.GetValue())
-
-		return nil
-	}))
-
-	for n := range gaugeMetrics {
-		require.NoError(t, storage.Delete(n))
+		require.Equal(t, metrics.GaugeMetricType, m.MType)
+		require.NotNil(t, m.Value)
+		require.Equal(t, v, *m.Value)
 	}
 
+	storage = NewCommonMetricsStorage()
 	counterMetrics := map[string]int64{
 		"one":   10,
 		"two":   11,
@@ -48,23 +35,14 @@ func TestMetricsStorage(t *testing.T) {
 	}
 
 	for n, v := range counterMetrics {
-		require.NoError(t, storage.AddOrUpdate(n, metrics.NewCounterMeric(v)))
+		require.NoError(t, storage.AddOrUpdate(metrics.NewCounterMetric(n, v)))
 	}
 
-	require.NoError(t, storage.ForEachMetric(func(name string, m metrics.Metric) error {
-		v, ok := counterMetrics[name]
+	for _, m := range storage.GetAllMetrics() {
+		v, ok := counterMetrics[m.ID]
 		require.True(t, ok)
-		g, ok := m.(*metrics.CounterMetric)
-		require.True(t, ok)
-		require.Equal(t, v, g.Val)
-
-		newVal := v + v
-		m.UpdateValue(metrics.NewCounterMeric(newVal))
-
-		require.Equal(t, newVal+v, g.Val)
-		sVal := strconv.FormatInt(g.Val, 10)
-		require.Equal(t, sVal, m.GetValue())
-
-		return nil
-	}))
+		require.Equal(t, metrics.CounterMetricType, m.MType)
+		require.NotNil(t, m.Delta)
+		require.Equal(t, v, *m.Delta)
+	}
 }

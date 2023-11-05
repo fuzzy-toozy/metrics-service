@@ -7,8 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/fuzzy-toozy/metrics-service/internal/common"
 	"github.com/fuzzy-toozy/metrics-service/internal/log"
+	"github.com/fuzzy-toozy/metrics-service/internal/metrics"
 	"github.com/fuzzy-toozy/metrics-service/internal/server/config"
 	"github.com/fuzzy-toozy/metrics-service/internal/server/handlers"
 	"github.com/fuzzy-toozy/metrics-service/internal/server/routing"
@@ -17,21 +17,21 @@ import (
 )
 
 type RespChecker struct {
-	expect common.MetricJSON
+	expect metrics.Metric
 	t      *testing.T
 }
 
 func (r *RespChecker) Check(req *httptest.ResponseRecorder) {
-	data := common.MetricJSON{}
+	data := metrics.Metric{}
 	err := json.NewDecoder(req.Body).Decode(&data)
 	require.NoError(r.t, err)
-	require.Equal(r.t, data.ID, r.expect.ID)
-	require.Equal(r.t, data.MType, r.expect.MType)
+	require.Equal(r.t, r.expect.ID, data.ID)
+	require.Equal(r.t, r.expect.MType, data.MType)
 	d1, err := data.GetData()
 	require.NoError(r.t, err)
 	d2, err := r.expect.GetData()
 	require.NoError(r.t, err)
-	require.Equal(r.t, d1, d2)
+	require.Equal(r.t, d2, d1)
 }
 
 func TestMetricRegistryHandler_ServeHTTP(t *testing.T) {
@@ -40,13 +40,13 @@ func TestMetricRegistryHandler_ServeHTTP(t *testing.T) {
 		r *http.Request
 	}
 
-	makeMetric := func(mname, mtype, mvalue string) common.MetricJSON {
-		data := common.MetricJSON{ID: mname, MType: mtype}
-		require.NoError(t, data.SetData(mvalue))
+	makeMetric := func(mname, mtype, mvalue string) metrics.Metric {
+		data := metrics.Metric{ID: mname, MType: mtype}
+		require.NoError(t, data.UpdateData(mvalue))
 		return data
 	}
 
-	makeJSONRequest := func(uri string, data common.MetricJSON) *http.Request {
+	makeJSONRequest := func(uri string, data metrics.Metric) *http.Request {
 		var buffer bytes.Buffer
 		require.NoError(t, json.NewEncoder(&buffer).Encode(data))
 		req, err := http.NewRequest(http.MethodPost, uri, &buffer)
@@ -89,44 +89,41 @@ func TestMetricRegistryHandler_ServeHTTP(t *testing.T) {
 			args:     args{w: httptest.NewRecorder(), r: httptest.NewRequest(http.MethodGet, "/value/counter/one", nil)},
 			wantCode: http.StatusOK},
 		{name: "Set gauge metric",
-			args:     args{w: httptest.NewRecorder(), r: httptest.NewRequest(http.MethodPost, "/update/gauge/one/99.99", nil)},
+			args:     args{w: httptest.NewRecorder(), r: httptest.NewRequest(http.MethodPost, "/update/gauge/two/99.99", nil)},
 			wantCode: http.StatusOK},
 		{name: "Get gauge metric",
-			args:     args{w: httptest.NewRecorder(), r: httptest.NewRequest(http.MethodGet, "/value/gauge/one", nil)},
+			args:     args{w: httptest.NewRecorder(), r: httptest.NewRequest(http.MethodGet, "/value/gauge/two", nil)},
 			wantCode: http.StatusOK},
 		{name: "Get all metrics",
 			args:     args{w: httptest.NewRecorder(), r: httptest.NewRequest(http.MethodGet, "/", nil)},
 			wantCode: http.StatusOK},
 		{name: "Set gauge metric JSON",
 			args: args{w: httptest.NewRecorder(), r: makeJSONRequest("/update",
-				makeMetric("one", common.MetricTypeGauge, "10.999"))},
+				makeMetric("two", metrics.GaugeMetricType, "10.999"))},
 			wantCode:    http.StatusOK,
-			respChecker: &RespChecker{t: t, expect: makeMetric("one", common.MetricTypeGauge, "10.999")},
+			respChecker: &RespChecker{t: t, expect: makeMetric("two", metrics.GaugeMetricType, "10.999")},
 		},
 		{name: "Get gauge metric JSON",
 			args: args{w: httptest.NewRecorder(), r: makeJSONRequest("/value",
-				makeMetric("one", common.MetricTypeGauge, "10.999"))},
+				makeMetric("two", metrics.GaugeMetricType, "10.999"))},
 			wantCode:    http.StatusOK,
-			respChecker: &RespChecker{t: t, expect: makeMetric("one", common.MetricTypeGauge, "10.999")},
+			respChecker: &RespChecker{t: t, expect: makeMetric("two", metrics.GaugeMetricType, "10.999")},
 		},
 		{name: "Set counter metric JSON",
 			args: args{w: httptest.NewRecorder(), r: makeJSONRequest("/update",
-				makeMetric("one", common.MetricTypeGauge, "10.999"))},
+				makeMetric("three", metrics.CounterMetricType, "999"))},
 			wantCode:    http.StatusOK,
-			respChecker: &RespChecker{t: t, expect: makeMetric("one", common.MetricTypeGauge, "10.999")},
+			respChecker: &RespChecker{t: t, expect: makeMetric("three", metrics.CounterMetricType, "999")},
 		},
 		{name: "Get counter metric JSON",
 			args: args{w: httptest.NewRecorder(), r: makeJSONRequest("/value",
-				makeMetric("one", common.MetricTypeCounter, "999"))},
+				makeMetric("three", metrics.CounterMetricType, "999"))},
 			wantCode:    http.StatusOK,
-			respChecker: &RespChecker{t: t, expect: makeMetric("one", common.MetricTypeCounter, "999")},
+			respChecker: &RespChecker{t: t, expect: makeMetric("three", metrics.CounterMetricType, "999")},
 		},
 	}
 
-	registry := storage.NewDeafultCommonMetricsStorage()
-	registry.AddRepository(common.MetricTypeGauge, storage.NewGaugeMetricRepository())
-	registry.AddRepository(common.MetricTypeCounter, storage.NewCounterMetricRepository())
-
+	registry := storage.NewCommonMetricsRepository()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			h := handlers.NewMetricRegistryHandler(registry, log.NewDevZapLogger(),
