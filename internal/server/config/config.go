@@ -33,7 +33,8 @@ func BuildConfig() (*Config, error) {
 	storeInterval := config.DurationOption{D: 300 * time.Second}
 
 	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
-	flag.StringVar(&c.DatabaseConfig.ConnString, "d", "", "Database connection string")
+	flag.StringVar(&c.DatabaseConfig.ConnString, "d", "",
+		"Database connection string")
 	flag.StringVar(&c.ServerAddress, "a", "localhost:8080", "Address and port to bind server to")
 	flag.StringVar(&c.StoreFilePath, "f", "/tmp/metrics-db.json", "File to store metrics data to")
 	flag.BoolVar(&c.RestoreData, "r", true, "Restore data from previously stored values")
@@ -56,6 +57,10 @@ func BuildConfig() (*Config, error) {
 	err = c.parseEnvVariables()
 	if err != nil {
 		return nil, err
+	}
+
+	if len(c.DatabaseConfig.ConnString) > 0 {
+		c.DatabaseConfig.UseDatabase = true
 	}
 
 	return &c, nil

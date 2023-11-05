@@ -121,7 +121,6 @@ func (r *CommonMetricRepository) UnmarshalJSON(data []byte) error {
 	defer r.lock.Unlock()
 	m := map[string]map[string]string{}
 	err := json.Unmarshal(data, &m)
-	fmt.Println(m)
 	return err
 }
 
@@ -283,5 +282,7 @@ func (s *CommonMetricsStorage) DeleteRepository(name string) error {
 
 func NewCommonMetricsStorage() *CommonMetricsStorage {
 	storage := CommonMetricsStorage{storage: make(map[string]Repository)}
+	storage.AddRepository("gauge", NewGaugeMetricRepository())
+	storage.AddRepository("counter", NewCounterMetricRepository())
 	return &storage
 }

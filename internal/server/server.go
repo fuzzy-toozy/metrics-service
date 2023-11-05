@@ -35,10 +35,21 @@ func NewServer(logger logging.Logger) (*Server, error) {
 
 	s.config = config
 
-	s.metricsStorage = storage.NewCommonMetricsStorage()
-	registryHandler := handlers.NewDefaultMetricRegistryHandler(logger, s.metricsStorage, s.storageSaver, config.DatabaseConfig)
+	if config.DatabaseConfig.UseDatabase {
+		s.metricsStorage, err = storage.NewPGMetricsStorage(config.DatabaseConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create metrics storage: %w", err)
+		}
+	} else {
+		s.metricsStorage = storage.NewCommonMetricsStorage()
+	}
 
-	if config.RestoreData {
+	registryHandler, err := handlers.NewDefaultMetricRegistryHandler(logger, s.metricsStorage, s.storageSaver, config.DatabaseConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create server: %w", err)
+	}
+
+	if config.RestoreData && !config.DatabaseConfig.UseDatabase {
 		f, err := os.OpenFile(config.StoreFilePath, os.O_RDONLY, 0444)
 		if err == nil {
 			err = s.metricsStorage.Load(f)
@@ -50,7 +61,7 @@ func NewServer(logger logging.Logger) (*Server, error) {
 		}
 	}
 
-	if len(config.StoreFilePath) > 0 {
+	if len(config.StoreFilePath) > 0 && !config.DatabaseConfig.UseDatabase {
 		fileSaver := storage.NewFileSaver(s.metricsStorage, config.StoreFilePath, logger)
 		if config.StoreInterval > 0 {
 			s.asyncStorageSaver = storage.NewPeriodicSaver(config.StoreInterval, logger, fileSaver)

@@ -82,7 +82,7 @@ func (h *MetricRegistryHandler) getMetric(mtype, mname string) (metricValue stri
 
 func (h *MetricRegistryHandler) GetMetric(w http.ResponseWriter, r *http.Request) {
 	metricType := strings.ToLower(chi.URLParam(r, h.metricInfo.Type))
-	metricName := strings.ToLower(chi.URLParam(r, h.metricInfo.Name))
+	metricName := chi.URLParam(r, h.metricInfo.Name)
 
 	value, status, err := h.getMetric(metricType, metricName)
 
@@ -197,7 +197,6 @@ func (h *MetricRegistryHandler) updateMetric(mtype, mname, mvalue string) (metri
 	err = repo.AddOrUpdate(mname, mvalue)
 
 	if err != nil {
-		h.log.Debugf("Bad metric value: %v. %v", mvalue, err)
 		return "", http.StatusBadRequest, fmt.Errorf("failed to add/update metric %v with value %v: %w", mname, mvalue, err)
 	}
 
@@ -208,15 +207,13 @@ func (h *MetricRegistryHandler) updateMetric(mtype, mname, mvalue string) (metri
 		}
 	}
 
-	m, _ := repo.Get(mname)
-
-	return m.GetValue(), http.StatusOK, nil
+	return mvalue, http.StatusOK, nil
 }
 
 func (h *MetricRegistryHandler) UpdateMetric(w http.ResponseWriter, r *http.Request) {
 	metricType := strings.ToLower(chi.URLParam(r, h.metricInfo.Type))
-	metricName := strings.ToLower(chi.URLParam(r, h.metricInfo.Name))
 	metricValue := strings.ToLower(chi.URLParam(r, h.metricInfo.Value))
+	metricName := chi.URLParam(r, h.metricInfo.Name)
 
 	value, status, err := h.updateMetric(metricType, metricName, metricValue)
 
@@ -307,15 +304,12 @@ func NewMetricRegistryHandler(registry storage.MetricsStorage, logger log.Logger
 }
 
 func NewDefaultMetricRegistryHandler(logger log.Logger, registry storage.MetricsStorage,
-	storageSaver storage.StorageSaver, DBConfig config.DBConfig) *MetricRegistryHandler {
-	registry.AddRepository("gauge", storage.NewGaugeMetricRepository())
-	registry.AddRepository("counter", storage.NewCounterMetricRepository())
-
+	storageSaver storage.StorageSaver, config config.DBConfig) (*MetricRegistryHandler, error) {
 	minfo := MetricURLInfo{
 		Name:  "metricName",
 		Value: "metricValue",
 		Type:  "metricType",
 	}
 
-	return NewMetricRegistryHandler(registry, logger, minfo, storageSaver, DBConfig)
+	return NewMetricRegistryHandler(registry, logger, minfo, storageSaver, config), nil
 }
