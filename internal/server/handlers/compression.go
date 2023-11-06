@@ -94,7 +94,7 @@ func WithCompression(h http.Handler, log logging.Logger) http.Handler {
 		if needToDecompress(r) {
 			err = setupDecompression(r)
 			if err != nil {
-				log.Debugf("Failed to setup decompression")
+				log.Debugf("Failed to setup decompression: %v", err)
 			}
 		}
 

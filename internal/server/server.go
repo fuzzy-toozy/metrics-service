@@ -73,10 +73,15 @@ func NewServer(logger logging.Logger) (*Server, error) {
 		}
 	}
 
-	routerHandler := routing.SetupRouting(registryHandler)
-	serverHandler := handlers.WithLogging(
-		handlers.WithCompression(routerHandler, logger),
-		logger)
+	serverHandler := routing.SetupRouting(registryHandler)
+
+	if s.config.SecretKey != nil {
+		serverHandler = handlers.WithSignatureCheck(serverHandler, logger, config.SecretKey)
+	}
+
+	serverHandler = handlers.WithCompression(serverHandler, logger)
+	serverHandler = handlers.WithBodySizeLimit(serverHandler, config.MaxBodySize)
+	serverHandler = handlers.WithLogging(serverHandler, logger)
 
 	s.httpServer = NewDefaultHTTPServer(*config, logger, serverHandler)
 
