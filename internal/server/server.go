@@ -23,10 +23,16 @@ type Server struct {
 	metricsStorage    storage.Repository
 	config            *config.Config
 	logger            logging.Logger
+	stopCtx           context.Context
+	stop              context.CancelFunc
 }
 
 func NewServer(logger logging.Logger) (*Server, error) {
 	s := Server{}
+	ctx, cancel := context.WithCancel(context.Background())
+	s.stopCtx = ctx
+	s.stop = cancel
+
 	s.logger = logger
 	config, err := config.BuildConfig()
 	if err != nil {
@@ -36,7 +42,7 @@ func NewServer(logger logging.Logger) (*Server, error) {
 	s.config = config
 
 	if config.DatabaseConfig.UseDatabase {
-		s.metricsStorage, err = storage.NewPGMetricRepository(config.DatabaseConfig, storage.NewDefaultDBRetryExecutor())
+		s.metricsStorage, err = storage.NewPGMetricRepository(config.DatabaseConfig, storage.NewDefaultDBRetryExecutor(s.stopCtx))
 		if err != nil {
 			return nil, fmt.Errorf("failed to create metrics storage: %w", err)
 		}
@@ -89,7 +95,8 @@ func NewServer(logger logging.Logger) (*Server, error) {
 }
 
 func (s *Server) Run() error {
-	ctx, cancel := context.WithCancel(context.Background())
+	s.config.Print(s.logger)
+
 	start := func() error {
 		return s.httpServer.ListenAndServe()
 	}
@@ -115,10 +122,10 @@ func (s *Server) Run() error {
 		c := make(chan os.Signal, 1)
 		signal.Notify(c, os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
 		<-c
-		cancel()
+		s.stop()
 	}()
 
-	g, gCtx := errgroup.WithContext(ctx)
+	g, gCtx := errgroup.WithContext(s.stopCtx)
 
 	g.Go(func() error {
 		return start()
