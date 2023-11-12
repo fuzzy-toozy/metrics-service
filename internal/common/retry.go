@@ -1,6 +1,7 @@
 package common
 
 import (
+	"context"
 	"errors"
 	"net"
 	"time"
@@ -11,6 +12,7 @@ type RetryExecutor interface {
 }
 
 type CommonRetryExecutor struct {
+	stopCtx      context.Context
 	retryDelta   time.Duration
 	retriesCount uint
 	errs         []error
@@ -39,7 +41,12 @@ func (r *CommonRetryExecutor) RetryOnError(callback func() error) error {
 		if !errorIsOneOf(err, r.errs) && !isNetworkError(err) {
 			break
 		}
-		time.Sleep(waitTime)
+
+		select {
+		case <-time.After(waitTime):
+		case <-r.stopCtx.Done():
+			return r.stopCtx.Err()
+		}
 
 		waitTime += r.retryDelta
 	}
@@ -47,6 +54,14 @@ func (r *CommonRetryExecutor) RetryOnError(callback func() error) error {
 	return err
 }
 
-func NewCommonRetryExecutor(retryDelta time.Duration, retriesCount uint, allowedErrors []error) *CommonRetryExecutor {
-	return &CommonRetryExecutor{retryDelta: retryDelta, retriesCount: retriesCount, errs: allowedErrors}
+func NewCommonRetryExecutor(
+	stopCtx context.Context,
+	retryDelta time.Duration,
+	retriesCount uint,
+	allowedErrors []error) *CommonRetryExecutor {
+	return &CommonRetryExecutor{
+		stopCtx:      stopCtx,
+		retryDelta:   retryDelta,
+		retriesCount: retriesCount,
+		errs:         allowedErrors}
 }

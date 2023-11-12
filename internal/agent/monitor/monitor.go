@@ -1,12 +1,16 @@
 package monitor
 
 import (
+	"fmt"
 	"math/rand"
 	"runtime"
+	"time"
 
 	"github.com/fuzzy-toozy/metrics-service/internal/agent/monitor/storage"
 	"github.com/fuzzy-toozy/metrics-service/internal/log"
 	"github.com/fuzzy-toozy/metrics-service/internal/metrics"
+	"github.com/shirou/gopsutil/cpu"
+	"github.com/shirou/gopsutil/mem"
 )
 
 var metricsGatherCallbacks []func(*runtime.MemStats, storage.MetricsStorage) error = []func(*runtime.MemStats, storage.MetricsStorage) error{
@@ -130,6 +134,52 @@ func (m *CommonMonitor) GetMetrics() storage.MetricsStorage {
 	return m.storage
 }
 
-func NewCommonMonitor(s storage.MetricsStorage, l log.Logger) *CommonMonitor {
+func NewMetricsMonitor(s storage.MetricsStorage, l log.Logger) *CommonMonitor {
 	return &CommonMonitor{storage: s, log: l}
+}
+
+type PsMonitor struct {
+	storage storage.MetricsStorage
+	log     log.Logger
+}
+
+func NewPsMonitor(s storage.MetricsStorage, l log.Logger) *PsMonitor {
+	return &PsMonitor{storage: s, log: l}
+}
+
+func (m *PsMonitor) GetMetricsStorage() storage.MetricsStorage {
+	return m.storage
+}
+
+func (m *PsMonitor) GatherMetrics() error {
+	m.storage.Clear()
+	memData, err := mem.VirtualMemory()
+	if err != nil {
+		return err
+	}
+
+	err = m.storage.AddOrUpdate(metrics.NewGaugeMetric("TotalMemory", float64(memData.Total)))
+	if err != nil {
+		return err
+	}
+
+	err = m.storage.AddOrUpdate(metrics.NewGaugeMetric("FreeMemory", float64(memData.Available)))
+	if err != nil {
+		return err
+	}
+
+	cpuLoad, err := cpu.Percent(100*time.Millisecond, true)
+
+	if err != nil {
+		return err
+	}
+
+	for i, val := range cpuLoad {
+		err = m.storage.AddOrUpdate(metrics.NewGaugeMetric(fmt.Sprintf("CPUutilization%v", i+1), val))
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

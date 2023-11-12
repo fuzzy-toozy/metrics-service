@@ -372,11 +372,11 @@ func (r *PGMetricRepository) Release() error {
 	})
 }
 
-func NewDefaultDBRetryExecutor() *common.CommonRetryExecutor {
+func NewDefaultDBRetryExecutor(stopCtx context.Context) *common.CommonRetryExecutor {
 	errs := []error{
 		pgx.ErrDeadConn,
 		pgx.ErrAcquireTimeout,
 		context.DeadlineExceeded,
 	}
-	return common.NewCommonRetryExecutor(2*time.Second, 3, errs)
+	return common.NewCommonRetryExecutor(stopCtx, 2*time.Second, 3, errs)
 }
