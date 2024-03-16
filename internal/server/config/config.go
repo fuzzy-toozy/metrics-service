@@ -8,6 +8,7 @@ import (
 
 	"github.com/caarlos0/env"
 	"github.com/fuzzy-toozy/metrics-service/internal/config"
+	"github.com/fuzzy-toozy/metrics-service/internal/log"
 )
 
 type Config struct {
@@ -21,6 +22,21 @@ type Config struct {
 	WriteTimeout   time.Duration
 	IdleTimeout    time.Duration
 	StoreInterval  time.Duration
+}
+
+func (c *Config) Print(logger log.Logger) {
+	logger.Infof("Server running with config:")
+	logger.Infof("Server address: %v", c.ServerAddress)
+	logger.Infof("Store file path: %v", c.ServerAddress)
+	logger.Infof("Store interval: %v", c.IdleTimeout)
+	logger.Infof("Restore data: %v", c.RestoreData)
+	logger.Infof("Max request body size: %v", c.MaxBodySize)
+	logger.Infof("Read timeout: %v", c.ReadTimeout)
+	logger.Infof("Write timeout: %v", c.WriteTimeout)
+	logger.Infof("Idle timeout: %v", c.IdleTimeout)
+
+	logger.Infof("Database config:")
+	c.DatabaseConfig.Print(logger)
 }
 
 func BuildConfig() (*Config, error) {
@@ -75,7 +91,7 @@ func BuildConfig() (*Config, error) {
 	return &c, nil
 }
 
-func (config *Config) parseEnvVariables() error {
+func (c *Config) parseEnvVariables() error {
 	type EnvConfig struct {
 		ServerAddress string `env:"ADDRESS"`
 		StoreInterval string `env:"STORE_INTERVAL"`
@@ -91,7 +107,7 @@ func (config *Config) parseEnvVariables() error {
 	}
 
 	if len(ecfg.ServerAddress) > 0 {
-		config.ServerAddress = ecfg.ServerAddress
+		c.ServerAddress = ecfg.ServerAddress
 	}
 
 	if len(ecfg.StoreInterval) > 0 {
@@ -99,11 +115,11 @@ func (config *Config) parseEnvVariables() error {
 		if err != nil {
 			return err
 		}
-		config.StoreInterval = time.Duration(val * uint64(time.Second))
+		c.StoreInterval = time.Duration(val * uint64(time.Second))
 	}
 
 	if len(ecfg.StoragePath) > 0 {
-		config.StoreFilePath = ecfg.StoragePath
+		c.StoreFilePath = ecfg.StoragePath
 	}
 
 	if len(ecfg.Restore) > 0 {
@@ -111,15 +127,15 @@ func (config *Config) parseEnvVariables() error {
 		if err != nil {
 			return err
 		}
-		config.RestoreData = val
+		c.RestoreData = val
 	}
 
 	if len(ecfg.DBConnStr) > 0 {
-		config.DatabaseConfig.ConnString = ecfg.DBConnStr
+		c.DatabaseConfig.ConnString = ecfg.DBConnStr
 	}
 
 	if len(ecfg.SecretKey) > 0 {
-		config.SecretKey = []byte(ecfg.SecretKey)
+		c.SecretKey = []byte(ecfg.SecretKey)
 	}
 
 	return nil

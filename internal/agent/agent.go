@@ -2,17 +2,21 @@ package agent
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"path"
-	"strings"
+	"os"
+	"os/signal"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/fuzzy-toozy/metrics-service/internal/agent/config"
 	monitorHttp "github.com/fuzzy-toozy/metrics-service/internal/agent/http"
 	"github.com/fuzzy-toozy/metrics-service/internal/agent/monitor"
+	"github.com/fuzzy-toozy/metrics-service/internal/agent/monitor/storage"
 	"github.com/fuzzy-toozy/metrics-service/internal/common"
 	"github.com/fuzzy-toozy/metrics-service/internal/compression"
 	"github.com/fuzzy-toozy/metrics-service/internal/encryption"
@@ -20,40 +24,64 @@ import (
 )
 
 type Agent struct {
-	metricsMonitor    monitor.Monitor
-	httpClient        monitorHttp.HTTPClient
-	log               log.Logger
-	config            config.Config
-	buffer            bytes.Buffer
-	compressionBuffer bytes.Buffer
-	compressAlgo      string
+	metricsMonitor monitor.Monitor
+	psMonitor      monitor.Monitor
+	log            log.Logger
+	config         config.Config
 }
 
-func NewAgent(config config.Config, httpClient monitorHttp.HTTPClient,
-	metricsMonitor monitor.Monitor, logger log.Logger) *Agent {
+type buffers struct {
+	compression bytes.Buffer
+	data        bytes.Buffer
+}
+
+type worker struct {
+	buffs      buffers
+	httpClient monitorHttp.HTTPClient
+	log        log.Logger
+	config     *config.Config
+}
+
+type dataType int
+
+const (
+	tBULK dataType = iota
+	tSINGLE
+)
+
+type reportData struct {
+	dType dataType
+	data  json.Marshaler
+}
+
+func NewAgent(config config.Config, logger log.Logger, metricsMonitor monitor.Monitor, psMonitor monitor.Monitor) *Agent {
 	a := Agent{config: config,
-		httpClient:        httpClient,
-		metricsMonitor:    metricsMonitor,
-		log:               logger,
-		buffer:            bytes.Buffer{},
-		compressionBuffer: bytes.Buffer{},
-		compressAlgo:      "gzip"}
+		metricsMonitor: metricsMonitor,
+		psMonitor:      psMonitor,
+		log:            logger}
 	return &a
 }
 
-func (a *Agent) GetCompressedBytes(data []byte) ([]byte, error) {
-	if len(a.compressAlgo) > 0 {
-		factory, err := compression.GetCompressorFactory(a.compressAlgo)
+func newWorker(config *config.Config, logger log.Logger) *worker {
+	w := worker{httpClient: monitorHttp.NewDefaultHTTPClient(), log: logger, config: config}
+	b := buffers{data: bytes.Buffer{}, compression: bytes.Buffer{}}
+	w.buffs = b
+	return &w
+}
+
+func (w *worker) getCompressedBytes(data []byte) ([]byte, error) {
+	if len(w.config.CompressAlgo) > 0 {
+		factory, err := compression.GetCompressorFactory(w.config.CompressAlgo)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get compression factory: %w", err)
 		}
-		a.compressionBuffer.Reset()
-		compressor, err := factory(&a.compressionBuffer)
+		w.buffs.compression.Reset()
+		compressor, err := factory(&w.buffs.compression)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create compressor: %w", err)
 		}
 
-		_, err = compressor.Write(a.buffer.Bytes())
+		_, err = compressor.Write(w.buffs.data.Bytes())
 
 		if err != nil {
 			return nil, fmt.Errorf("failed to compress data: %w", err)
@@ -65,48 +93,50 @@ func (a *Agent) GetCompressedBytes(data []byte) ([]byte, error) {
 			return nil, fmt.Errorf("failed to finalize compressor: %w", err)
 		}
 
-		return a.compressionBuffer.Bytes(), nil
+		return w.buffs.compression.Bytes(), nil
 	}
 
 	return nil, fmt.Errorf("no compression algo specified")
 }
 
-func (a *Agent) ReportMetricsBulk() error {
-	serverEndpoint := a.config.ServerAddress + a.config.ReportBulkURL
-	serverEndpoint = path.Clean(serverEndpoint)
-	serverEndpoint = strings.Trim(serverEndpoint, "/")
-	serverEndpoint = fmt.Sprintf("http://%v", serverEndpoint)
-
-	metricsList := a.metricsMonitor.GetMetricsStorage().GetAllMetrics()
+func (w *worker) reportDataJSON(data reportData) error {
+	var reportURL string
+	if data.dType == tBULK {
+		reportURL = w.config.ReportBulkEndpoint
+	} else if data.dType == tSINGLE {
+		reportURL = w.config.ReportEndpoint
+	} else {
+		return fmt.Errorf("wrong report data type %v", data.dType)
+	}
 
 	contentType := "application/json"
 	contentEncoding := ""
 
-	a.buffer.Reset()
-	if err := json.NewEncoder(&a.buffer).Encode(metricsList); err != nil {
+	w.buffs.data.Reset()
+	if err := json.NewEncoder(&w.buffs.data).Encode(data.data); err != nil {
 		return fmt.Errorf("failed to encode metrics to JSON: %w", err)
 	}
 
-	bytesToSend := a.buffer.Bytes()
+	bytesToSend := w.buffs.data.Bytes()
 
 	var sigHash string
-	if a.config.SecretKey != nil {
-		hash, err := encryption.SignData(bytesToSend, a.config.SecretKey)
+	if w.config.SecretKey != nil {
+		hash, err := encryption.SignData(bytesToSend, w.config.SecretKey)
 		if err != nil {
 			return fmt.Errorf("failed to sign request data: %w", err)
 		}
 		sigHash = hash
 	}
 
-	compressedBytes, err := a.GetCompressedBytes(bytesToSend)
+	compressedBytes, err := w.getCompressedBytes(bytesToSend)
 	if err != nil {
-		a.log.Debugf("Unable to enable compression: %v", err)
+		w.log.Debugf("Unable to enable compression: %v", err)
 	} else {
 		bytesToSend = compressedBytes
-		contentEncoding = a.compressAlgo
+		contentEncoding = w.config.CompressAlgo
 	}
 
-	req, err := http.NewRequest(http.MethodPost, serverEndpoint, bytes.NewBuffer(bytesToSend))
+	req, err := http.NewRequest(http.MethodPost, reportURL, bytes.NewBuffer(bytesToSend))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
@@ -118,13 +148,13 @@ func (a *Agent) ReportMetricsBulk() error {
 		req.Header.Set("HashSHA256", sigHash)
 	}
 
-	resp, err := a.httpClient.Send(req)
+	resp, err := w.httpClient.Send(req)
 
 	if resp != nil {
 		defer func() {
 			_, err := io.Copy(io.Discard, resp.Body)
 			if err != nil {
-				a.log.Debugf("Failed reading request body: %v", err)
+				w.log.Debugf("Failed reading request body: %v", err)
 			}
 			resp.Body.Close()
 		}()
@@ -137,103 +167,113 @@ func (a *Agent) ReportMetricsBulk() error {
 	return err
 }
 
-func (a *Agent) ReportMetrics() error {
-	serverEndpoint := a.config.ServerAddress + a.config.ReportURL
-	serverEndpoint = path.Clean(serverEndpoint)
-	serverEndpoint = strings.Trim(serverEndpoint, "/")
-	serverEndpoint = fmt.Sprintf("http://%v", serverEndpoint)
+func (a *Agent) reportMetrics(ctx context.Context, mstorage storage.MetricsStorage, gatherChan chan<- reportData) {
+	allMetrics := mstorage.GetAllMetrics()
 
-	for _, m := range a.metricsMonitor.GetMetricsStorage().GetAllMetrics() {
-		contentType := "application/json"
-		contentEncoding := ""
-
-		a.buffer.Reset()
-		if err := json.NewEncoder(&a.buffer).Encode(m); err != nil {
-			return fmt.Errorf("failed to encode metric to JSON: %w", err)
-		}
-
-		bytesToSend := a.buffer.Bytes()
-
-		var sigHash string
-		if a.config.SecretKey != nil {
-			hash, err := encryption.SignData(bytesToSend, a.config.SecretKey)
-			if err != nil {
-				return fmt.Errorf("failed to sign request data: %w", err)
-			}
-			sigHash = hash
-		}
-
-		compressedBytes, err := a.GetCompressedBytes(bytesToSend)
-		if err != nil {
-			a.log.Debugf("Unable to enable compression: %v", err)
-		} else {
-			bytesToSend = compressedBytes
-			contentEncoding = a.compressAlgo
-		}
-
-		req, err := http.NewRequest(http.MethodPost, serverEndpoint, bytes.NewBuffer(bytesToSend))
-		if err != nil {
-			return fmt.Errorf("failed to create request: %w", err)
-		}
-
-		req.Header.Set("Content-Type", contentType)
-		req.Header.Set("Content-Encoding", contentEncoding)
-
-		if len(sigHash) > 0 {
-			req.Header.Set("HashSHA256", sigHash)
-		}
-
-		resp, err := a.httpClient.Send(req)
-
-		if resp != nil {
-			defer func() {
-				_, err := io.Copy(io.Discard, resp.Body)
-				if err != nil {
-					a.log.Debugf("Failed reading request body: %v", err)
-				}
-				resp.Body.Close()
-			}()
-
-			val, _ := m.GetData()
-			a.log.Debugf("Sent metric of type %v, name %v, value %v to %v. Status %v",
-				m.MType, m.ID, val, serverEndpoint, resp.StatusCode)
-
-			if resp.StatusCode != http.StatusOK {
-				err = fmt.Errorf("failed to send metric %v. Status code: %v", m.ID, resp.StatusCode)
-			}
-		}
-
-		if err != nil {
-			return err
-		}
+	if len(allMetrics) == 0 {
+		return
 	}
 
-	return nil
+	rData := reportData{}
+	rData.data = allMetrics
+	rData.dType = tBULK
+
+	select {
+	case gatherChan <- rData:
+	case <-ctx.Done():
+		return
+	}
+
+	for _, m := range allMetrics {
+		rData := reportData{dType: tSINGLE, data: storage.StorageMetric(m)}
+		select {
+		case gatherChan <- rData:
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 func (a *Agent) Run() {
-	ticker := time.NewTicker(10 * time.Second)
-	retryExecutor := common.NewCommonRetryExecutor(2*time.Second, 3, nil)
-	for {
-		select {
-		case <-time.After(2 * time.Second):
-			err := a.metricsMonitor.GatherMetrics()
-			if err != nil {
-				a.log.Warnf("Failed to gather metrics. %v", err)
-			}
-		case <-ticker.C:
-			err := retryExecutor.RetryOnError(func() error {
-				return a.ReportMetricsBulk()
-			})
-			if err != nil {
-				a.log.Warnf("Failed to report metrics bulk. %v", err)
-			}
-			err = retryExecutor.RetryOnError(func() error {
-				return a.ReportMetrics()
-			})
-			if err != nil {
-				a.log.Warnf("Failed to report metrics. %v", err)
+	a.config.Print(a.log)
+
+	gatherChan := make(chan reportData, a.config.RateLimit)
+	defer close(gatherChan)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	go func() {
+		c := make(chan os.Signal, 1)
+		signal.Notify(c, os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
+		<-c
+		cancel()
+		a.log.Infof("Agent is stopping...")
+	}()
+
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		reportTicker := time.NewTicker(a.config.ReportInterval)
+		for {
+			select {
+			case <-time.After(a.config.PollInterval):
+				err := a.metricsMonitor.GatherMetrics()
+				if err != nil {
+					a.log.Warnf("Failed to gather app metrics. %v", err)
+				}
+			case <-reportTicker.C:
+				a.reportMetrics(ctx, a.metricsMonitor.GetMetricsStorage(), gatherChan)
+			case <-ctx.Done():
+				a.log.Infof("App metrics monitor worker exited. Reason: %v", ctx.Err())
+				return
 			}
 		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		reportTicker := time.NewTicker(a.config.ReportInterval)
+		for {
+			select {
+			case <-time.After(a.config.PollInterval):
+				err := a.psMonitor.GatherMetrics()
+				if err != nil {
+					a.log.Warnf("Failed to gather ps metrics. %v", err)
+				}
+			case <-reportTicker.C:
+				a.reportMetrics(ctx, a.psMonitor.GetMetricsStorage(), gatherChan)
+			case <-ctx.Done():
+				a.log.Infof("Ps metrics monitor worker exited: Reason: %v", ctx.Err())
+				return
+			}
+		}
+	}()
+
+	retryExecutor := common.NewCommonRetryExecutor(ctx, 2*time.Second, 3, nil)
+	wg.Add(int(a.config.RateLimit))
+	for i := 0; i < int(a.config.RateLimit); i++ {
+		i := i
+		go func() {
+			defer wg.Done()
+			w := newWorker(&a.config, a.log)
+			for {
+				select {
+				case data := <-gatherChan:
+					err := retryExecutor.RetryOnError(func() error {
+						return w.reportDataJSON(data)
+					})
+					if err != nil {
+						a.log.Errorf("failed to report metrics: %v", err)
+					}
+				case <-ctx.Done():
+					a.log.Infof("Sender worker %v exited. Reason: %v", i, ctx.Err())
+					return
+				}
+			}
+		}()
 	}
+
+	wg.Wait()
 }

@@ -1,24 +1,44 @@
 package storage
 
-import "github.com/fuzzy-toozy/metrics-service/internal/metrics"
+import (
+	"encoding/json"
+
+	"github.com/fuzzy-toozy/metrics-service/internal/metrics"
+)
 
 type MetricsStorage interface {
 	Clear()
 	AddOrUpdate(m metrics.Metric) error
-	GetAllMetrics() []metrics.Metric
+	GetAllMetrics() StorageMetrics
+}
+
+type StorageMetric metrics.Metric
+
+func (m StorageMetric) MarshalJSON() ([]byte, error) {
+	return json.Marshal(metrics.Metric(m))
+}
+
+type StorageMetrics []metrics.Metric
+
+func (m StorageMetrics) MarshalJSON() ([]byte, error) {
+	return json.Marshal([]metrics.Metric(m))
 }
 
 type CommonMetricsStorage struct {
-	storage []metrics.Metric
+	storage []StorageMetric
 }
 
 func (s *CommonMetricsStorage) AddOrUpdate(m metrics.Metric) error {
-	s.storage = append(s.storage, m)
+	s.storage = append(s.storage, StorageMetric(m))
 	return nil
 }
 
-func (s *CommonMetricsStorage) GetAllMetrics() []metrics.Metric {
-	return s.storage
+func (s *CommonMetricsStorage) GetAllMetrics() StorageMetrics {
+	cp := make([]metrics.Metric, len(s.storage))
+	for i, m := range s.storage {
+		cp[i] = metrics.Metric(m)
+	}
+	return cp
 }
 
 func (s *CommonMetricsStorage) Clear() {

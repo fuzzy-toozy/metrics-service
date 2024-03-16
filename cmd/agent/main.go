@@ -3,7 +3,6 @@ package main
 import (
 	"github.com/fuzzy-toozy/metrics-service/internal/agent"
 	"github.com/fuzzy-toozy/metrics-service/internal/agent/config"
-	"github.com/fuzzy-toozy/metrics-service/internal/agent/http"
 	"github.com/fuzzy-toozy/metrics-service/internal/agent/monitor"
 	"github.com/fuzzy-toozy/metrics-service/internal/agent/monitor/storage"
 	"github.com/fuzzy-toozy/metrics-service/internal/log"
@@ -17,10 +16,11 @@ func main() {
 		return
 	}
 
-	client := http.NewDefaultHTTPClient()
 	metricsStorage := storage.NewCommonMetricsStorage()
-	metricsMonitor := monitor.NewCommonMonitor(metricsStorage, logger)
+	metricsMonitor := monitor.NewMetricsMonitor(metricsStorage, logger)
+	psStorage := storage.NewCommonMetricsStorage()
+	psMonitor := monitor.NewPsMonitor(psStorage, logger)
 
-	agent := agent.NewAgent(*config, client, metricsMonitor, logger)
+	agent := agent.NewAgent(*config, logger, metricsMonitor, psMonitor)
 	agent.Run()
 }
