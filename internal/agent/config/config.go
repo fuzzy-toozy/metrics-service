@@ -13,6 +13,7 @@ type Config struct {
 	ServerAddress  string
 	ReportURL      string
 	ReportBulkURL  string
+	SecretKey      []byte
 	PollInterval   time.Duration
 	ReportInterval time.Duration
 }
@@ -22,7 +23,9 @@ func BuildConfig() (*Config, error) {
 	pollInterval := config.DurationOption{D: 2 * time.Second}
 	reportInterval := config.DurationOption{D: 10 * time.Second}
 	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
+	var secretKey string
 
+	flag.StringVar(&secretKey, "k", "", "Secret key")
 	flag.StringVar(&c.ServerAddress, "a", "localhost:8080", "Server address")
 	flag.StringVar(&c.ReportURL, "u", "/update", "Server endpoint path")
 	flag.StringVar(&c.ReportBulkURL, "ub", "/updates", "Server endpoint path")
@@ -38,6 +41,10 @@ func BuildConfig() (*Config, error) {
 		return nil, err
 	}
 
+	if len(secretKey) != 0 {
+		c.SecretKey = []byte(secretKey)
+	}
+
 	err = c.parseEnvVariables()
 	if err != nil {
 		return nil, err
@@ -49,6 +56,7 @@ func BuildConfig() (*Config, error) {
 func (config *Config) parseEnvVariables() error {
 	type EnvConfig struct {
 		ServerAddress  string `env:"ADDRESS"`
+		SecretKey      string `env:"KEY"`
 		ReportInterval int    `env:"REPORT_INTERVAL"`
 		PollInterval   int    `env:"POLL_INTERVAL"`
 	}
@@ -56,6 +64,10 @@ func (config *Config) parseEnvVariables() error {
 	err := env.Parse(&ecfg)
 	if err != nil {
 		return err
+	}
+
+	if len(ecfg.SecretKey) > 0 {
+		config.SecretKey = []byte(ecfg.SecretKey)
 	}
 
 	if len(ecfg.ServerAddress) > 0 {

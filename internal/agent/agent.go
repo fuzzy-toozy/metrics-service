@@ -15,6 +15,7 @@ import (
 	"github.com/fuzzy-toozy/metrics-service/internal/agent/monitor"
 	"github.com/fuzzy-toozy/metrics-service/internal/common"
 	"github.com/fuzzy-toozy/metrics-service/internal/compression"
+	"github.com/fuzzy-toozy/metrics-service/internal/encryption"
 	"github.com/fuzzy-toozy/metrics-service/internal/log"
 )
 
@@ -88,6 +89,15 @@ func (a *Agent) ReportMetricsBulk() error {
 
 	bytesToSend := a.buffer.Bytes()
 
+	var sigHash string
+	if a.config.SecretKey != nil {
+		hash, err := encryption.SignData(bytesToSend, a.config.SecretKey)
+		if err != nil {
+			return fmt.Errorf("failed to sign request data: %w", err)
+		}
+		sigHash = hash
+	}
+
 	compressedBytes, err := a.GetCompressedBytes(bytesToSend)
 	if err != nil {
 		a.log.Debugf("Unable to enable compression: %v", err)
@@ -98,10 +108,15 @@ func (a *Agent) ReportMetricsBulk() error {
 
 	req, err := http.NewRequest(http.MethodPost, serverEndpoint, bytes.NewBuffer(bytesToSend))
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create request: %w", err)
 	}
+
 	req.Header.Set("Content-Type", contentType)
 	req.Header.Set("Content-Encoding", contentEncoding)
+
+	if len(sigHash) != 0 {
+		req.Header.Set("HashSHA256", sigHash)
+	}
 
 	resp, err := a.httpClient.Send(req)
 
@@ -127,7 +142,7 @@ func (a *Agent) ReportMetrics() error {
 	serverEndpoint = path.Clean(serverEndpoint)
 	serverEndpoint = strings.Trim(serverEndpoint, "/")
 	serverEndpoint = fmt.Sprintf("http://%v", serverEndpoint)
-	fmt.Println("Storage length:", len(a.metricsMonitor.GetMetricsStorage().GetAllMetrics()))
+
 	for _, m := range a.metricsMonitor.GetMetricsStorage().GetAllMetrics() {
 		contentType := "application/json"
 		contentEncoding := ""
@@ -139,6 +154,15 @@ func (a *Agent) ReportMetrics() error {
 
 		bytesToSend := a.buffer.Bytes()
 
+		var sigHash string
+		if a.config.SecretKey != nil {
+			hash, err := encryption.SignData(bytesToSend, a.config.SecretKey)
+			if err != nil {
+				return fmt.Errorf("failed to sign request data: %w", err)
+			}
+			sigHash = hash
+		}
+
 		compressedBytes, err := a.GetCompressedBytes(bytesToSend)
 		if err != nil {
 			a.log.Debugf("Unable to enable compression: %v", err)
@@ -149,10 +173,15 @@ func (a *Agent) ReportMetrics() error {
 
 		req, err := http.NewRequest(http.MethodPost, serverEndpoint, bytes.NewBuffer(bytesToSend))
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to create request: %w", err)
 		}
+
 		req.Header.Set("Content-Type", contentType)
 		req.Header.Set("Content-Encoding", contentEncoding)
+
+		if len(sigHash) > 0 {
+			req.Header.Set("HashSHA256", sigHash)
+		}
 
 		resp, err := a.httpClient.Send(req)
 
