@@ -34,7 +34,7 @@ func (r *RespChecker) Check(req *httptest.ResponseRecorder) {
 	require.Equal(r.t, d2, d1)
 }
 
-func TestMetricRegistryHandler_ServeHTTP(t *testing.T) {
+func TestMetrics(t *testing.T) {
 	type args struct {
 		w http.ResponseWriter
 		r *http.Request

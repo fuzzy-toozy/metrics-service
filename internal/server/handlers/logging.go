@@ -1,3 +1,4 @@
+// Provides middleware to log request parameters.
 package handlers
 
 import (
@@ -7,6 +8,7 @@ import (
 	logging "github.com/fuzzy-toozy/metrics-service/internal/log"
 )
 
+// WithLogging retunrs handler that logs request parameters.
 func WithLogging(h http.Handler, log logging.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		responseData := logging.ResponseData{}

@@ -1,3 +1,9 @@
+// General metric type. Used in agent and server.
+// Currently supports 2 metric types: Gauge and Counter.
+// Gauge metric type supports only float64 values,
+// updates of gauge metric simply replace old value.
+// Counter metric type support int64 values,
+// updates of counter metric add passed value to previous value.
 package metrics
 
 import (
@@ -7,9 +13,13 @@ import (
 )
 
 type Metric struct {
-	ID    string   `json:"id"`
-	MType string   `json:"type"`
-	Delta *int64   `json:"delta,omitempty"`
+	// ID metric name
+	ID string `json:"id"`
+	// MType metric type (Gauge or Counter)
+	MType string `json:"type"`
+	// Delta metric value used for Counter metric type
+	Delta *int64 `json:"delta,omitempty"`
+	// Value metric value used for Gauge metric type
 	Value *float64 `json:"value,omitempty"`
 }
 
@@ -23,16 +33,54 @@ var supportedMetricTypes map[string]bool = map[string]bool{
 	CounterMetricType: true,
 }
 
+// IsValidMetricType check if metric type is supported.
 func IsValidMetricType(mtype string) bool {
 	_, ok := supportedMetricTypes[mtype]
 	return ok
 }
 
+// Equal compares two metrics.
+// Metrics are considered equal if types are equal
+// and according values for types are equal.
+// Metrics with invalid types considered unequal.
+// Metrics with unset values considered equal.
+func (m *Metric) Equal(arg *Metric) bool {
+	if arg.MType != m.MType {
+		return false
+	}
+
+	switch m.MType {
+	case CounterMetricType:
+		if m.Delta == nil && arg.Delta == nil {
+			return true
+		}
+
+		if m.Delta != nil && arg.Delta != nil {
+			return *m.Delta == *arg.Delta
+		}
+
+		return false
+	case GaugeMetricType:
+		if m.Value == nil && arg.Value == nil {
+			return true
+		}
+
+		if m.Value != nil && arg.Value != nil {
+			return *m.Value == *m.Value
+		}
+
+		return false
+	}
+
+	return false
+}
+
+// GetData get string representation of metric value.
+// Returns error if metric is of invalid type or value is not set.
 func (m *Metric) GetData() (string, error) {
 	mt := strings.ToLower(m.MType)
 	var err error
 	var res string
-
 	if mt == GaugeMetricType {
 		if m.Value != nil {
 			res = strconv.FormatFloat(*m.Value, 'f', -1, 64)
@@ -52,6 +100,11 @@ func (m *Metric) GetData() (string, error) {
 	return res, err
 }
 
+// UpdateData updates meric value from string.
+// Returns error if string value parse to according type failed or
+// metric type is invalid.
+// For gauge type simply replaces the value,
+// for counter type adds new value to previos value.
 func (m *Metric) UpdateData(data string) error {
 	mt := strings.ToLower(m.MType)
 
@@ -79,6 +132,9 @@ func (m *Metric) UpdateData(data string) error {
 	return nil
 }
 
+// SetData sets metric value from string.
+// Returns error if string value parse to according type failed or
+// metric type is invalid.
 func (m *Metric) SetData(data string) error {
 	mt := strings.ToLower(m.MType)
 

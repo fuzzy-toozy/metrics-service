@@ -1,3 +1,4 @@
+// Provides middleware to handle compresion/decompression.
 package handlers
 
 import (
@@ -81,6 +82,10 @@ func setupDecompression(r *http.Request) error {
 	return nil
 }
 
+// WithCompression returns compression handler.
+// Compression handler checks if data needs to be decompresed
+// and, if Content-Encoding is supported, attempts to decompress received data.
+// Also installs compressor proxy response writer.
 func WithCompression(h http.Handler, log logging.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		respWriter := w

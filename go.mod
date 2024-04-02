@@ -3,6 +3,7 @@ module github.com/fuzzy-toozy/metrics-service
 go 1.20
 
 require (
+	github.com/beevik/guid v1.0.0 // indirect
 	github.com/caarlos0/env v3.5.0+incompatible // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/go-chi/chi v1.5.5 // indirect

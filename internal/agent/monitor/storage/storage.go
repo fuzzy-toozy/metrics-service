@@ -6,6 +6,7 @@ import (
 	"github.com/fuzzy-toozy/metrics-service/internal/metrics"
 )
 
+// MetricsStorage interface of agent's metrics storage.
 type MetricsStorage interface {
 	Clear()
 	AddOrUpdate(m metrics.Metric) error
@@ -24,6 +25,8 @@ func (m StorageMetrics) MarshalJSON() ([]byte, error) {
 	return json.Marshal([]metrics.Metric(m))
 }
 
+// CommonMetricsStorage default metrics storage implementation.
+// Stores metrics in a slice.
 type CommonMetricsStorage struct {
 	storage []StorageMetric
 }
