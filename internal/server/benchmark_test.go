@@ -14,7 +14,6 @@ import (
 	"github.com/fuzzy-toozy/metrics-service/internal/metrics"
 	"github.com/fuzzy-toozy/metrics-service/internal/server/config"
 	"github.com/fuzzy-toozy/metrics-service/internal/server/handlers"
-	"github.com/fuzzy-toozy/metrics-service/internal/server/routing"
 	"github.com/fuzzy-toozy/metrics-service/internal/server/storage"
 )
 
@@ -123,7 +122,7 @@ func BenchmarkHandlers(b *testing.B) {
 	registry := storage.NewCommonMetricsRepository()
 	h := handlers.NewMetricRegistryHandler(registry, log.NewDevZapLogger(),
 		handlers.MetricURLInfo{Type: "mtype", Name: "mname", Value: "mval"}, nil, config.DBConfig{})
-	serverHandler := routing.SetupRouting(h)
+	serverHandler := handlers.SetupRouting(h)
 
 	randomMetrics := make([]metrics.Metric, 0, metricsNum)
 	jsonBulkHandlers := make([]*rewindHandler, metricsNum)

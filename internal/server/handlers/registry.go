@@ -30,6 +30,35 @@ type MetricRegistryHandler struct {
 	databaseConfig config.DBConfig
 }
 
+func setJSONContent(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+}
+
+func respEmptyJSON(w http.ResponseWriter, status int) {
+	setJSONContent(w)
+	w.WriteHeader(status)
+	w.Write([]byte("{}"))
+}
+
+func respMetricJSON(m metrics.Metric, w http.ResponseWriter, status int) {
+	setJSONContent(w)
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(m)
+}
+
+func respMetricsJSON(m []metrics.Metric, w http.ResponseWriter, status int) {
+	setJSONContent(w)
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(m)
+}
+
+// @Summary Health Check
+// @Description Pings the database to check its availability.
+// @Tags Health
+// @Produce plain
+// @Success 200 {string} string "OK"
+// @Failure 500 {string} string
+// @Router /ping [get]
 func (h *MetricRegistryHandler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	err := h.registry.HealthCheck()
 
@@ -64,6 +93,19 @@ func (h *MetricRegistryHandler) getMetric(name string, mtype string) (val string
 	return val, http.StatusOK, nil
 }
 
+// @Summary Get Metric
+// @Description searches metric by id and type and returns it's value in plain text.
+// @Tags Metrics
+// @ID get-metric
+// @Accept plain
+// @Produce plain
+// @Param metricName path string true "Name of the metric to retrieve"
+// @Param metricType path string true "Type of the metric to retrieve"
+// @Success 200 {string} string "Mertic value"
+// @Failure 400 {string} string
+// @Failure 404 {string} string
+// @Failure 500 {string} string
+// @Router /value/{metricType}/{metricName} [get]
 func (h *MetricRegistryHandler) GetMetric(w http.ResponseWriter, r *http.Request) {
 	metricType := strings.ToLower(chi.URLParam(r, h.metricInfo.Type))
 
@@ -80,13 +122,57 @@ func (h *MetricRegistryHandler) GetMetric(w http.ResponseWriter, r *http.Request
 	w.Write([]byte(val))
 }
 
+// @Summary Get Metric JSON
+// @Description Gets requested metric by id and type and returns it's id, type and value in JSON format.
+// @Tags Metrics
+// @ID get-metric-json
+// @Accept json
+// @Produce json
+// @Param metric body metrics.Metric true "Metric data"
+// @Success 200
+// @Failure 400
+// @Failure 404
+// @Failure 500
+// @Router /value [post]
+//
+// Request data example:
+// Counter type:
+//
+//	{
+//		 "id":"13eee119-cfaf-4b61-b101-41e26670a069",
+//		 "type":"counter",
+//	}
+//
+// Gauge type:
+//
+//	{
+//		 "id":"13eee119-cfaf-4b61-b101-41e26670a069",
+//		 "type":"gauge",
+//	}
+//
+// Returned data example:
+// Counter metric:
+//
+//	{
+//		 "id":"13eee119-cfaf-4b61-b101-41e26670a069",
+//		 "type":"counter",
+//		 "delta":42
+//	}
+//
+// Gauge metric:
+// Counter metric:
+//
+//	{
+//		 "id":"13eee119-cfaf-4b61-b101-41e26670a069",
+//		 "type":"gauge",
+//		 "value":0.42
+//	}
 func (h *MetricRegistryHandler) GetMetricJSON(w http.ResponseWriter, r *http.Request) {
 	receivedData := metrics.Metric{}
 
 	if err := json.NewDecoder(r.Body).Decode(&receivedData); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
 		h.log.Debugf("Failed to decode JSON data: %v", err)
-		w.Write([]byte("Bad metric format"))
+		respEmptyJSON(w, http.StatusBadRequest)
 		return
 	}
 
@@ -97,24 +183,24 @@ func (h *MetricRegistryHandler) GetMetricJSON(w http.ResponseWriter, r *http.Req
 	}
 
 	if status != http.StatusOK {
-		w.WriteHeader(status)
-		w.Write([]byte(value))
+		respEmptyJSON(w, status)
 		return
 	}
 
 	respData, _ := metrics.NewMetric(receivedData.ID, value, receivedData.MType)
 
-	if err := receivedData.UpdateData(value); err != nil {
-		h.log.Debugf("Failed to get metric of type %v, name %v: %v", receivedData.MType, receivedData.ID, err)
-		http.Error(w, "Failed to get metric", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(respData)
+	respMetricJSON(respData, w, status)
 }
 
+// @Summary Get All Metrics
+// @Description Returns all stored metrics in an HTML table.
+// @Tags Metrics
+// @ID get-all-metrics
+// @Accept html
+// @Produce html
+// @Success 200 {string} string "<!DOCTYPE html>..."
+// @Failure 500 {string} string ""
+// @Router / [get]
 func (h *MetricRegistryHandler) GetAllMetrics(w http.ResponseWriter, r *http.Request) {
 
 	type MetricInfo struct {
@@ -201,6 +287,20 @@ func (h *MetricRegistryHandler) updateMetric(mtype, mname, mvalue string) (metri
 	return updatedVal, status, nil
 }
 
+// @Summary Update Metric
+// @Description Updates the specified metric with the provided value.
+// @Tags Metrics
+// @ID update-metric
+// @Accept plain
+// @Produce plain
+// @Param metricName path string true "Name of the metric to update"
+// @Param metricType path string true "Type of the metric to update"
+// @Param metricValue path string true "Value to update the metric with"
+// @Success 200 {string} string "Updated metric value"
+// @Failure 400 {string} string
+// @Failure 404 {string} string
+// @Failure 500 {string} string
+// @Router /update/{metricType}/{metricName}/{metricValue} [post]
 func (h *MetricRegistryHandler) UpdateMetric(w http.ResponseWriter, r *http.Request) {
 	metricType := strings.ToLower(chi.URLParam(r, h.metricInfo.Type))
 	metricValue := strings.ToLower(chi.URLParam(r, h.metricInfo.Value))
@@ -216,13 +316,50 @@ func (h *MetricRegistryHandler) UpdateMetric(w http.ResponseWriter, r *http.Requ
 	w.Write([]byte(value))
 }
 
+// UpdateMetricsFromJSON updates or adds metrics received in request.
+//
+// @Summary Update or add metrics from JSON
+// @Description Updates or adds metrics received in request and returns the updated metrics.
+// @Tags Metrics
+// @ID update-metrics-from-json
+// @Accept json
+// @Produce json
+// @Param data body []metrics.Metric true "Metrics data"
+// @Success 200 {array} metrics.Metric "Updated metrics"
+// @Failure 400
+// @Failure 500
+// @Router /updates [post]
+//
+// Request data example:
+//
+//		[{
+//			 "id":"13eee119-cfaf-4b61-b101-41e26670a069",
+//			 "type":"counter",
+//	         "delta": 21
+//		},
+//		{
+//			 "id":"13eee119-cfaf-4b61-b101-41e26670a021",
+//			 "type":"gauge",
+//		     "value": 21.11
+//		}]
+//
+// Returned data example:
+//
+//		[{
+//			 "id":"13eee119-cfaf-4b61-b101-41e26670a069",
+//			 "type":"counter",
+//	         "delta": 43
+//		},
+//		{
+//			 "id":"13eee119-cfaf-4b61-b101-41e26670a021",
+//			 "type":"gauge",
+//		     "value": 21.11
+//		}]
 func (h *MetricRegistryHandler) UpdateMetricsFromJSON(w http.ResponseWriter, r *http.Request) {
 	receivedData := make([]metrics.Metric, 0)
 	if err := json.NewDecoder(r.Body).Decode(&receivedData); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
 		h.log.Debugf("Failed to decode JSON data: %v", err)
-		w.Write([]byte("Bad metric format"))
-
+		respEmptyJSON(w, http.StatusBadRequest)
 		return
 	}
 
@@ -230,44 +367,86 @@ func (h *MetricRegistryHandler) UpdateMetricsFromJSON(w http.ResponseWriter, r *
 	status := errtypes.ErrorToStatus(err)
 	if err != nil {
 		h.log.Errorf("Failed to add metrics: %v", err)
-		http.Error(w, "", status)
+		respEmptyJSON(w, status)
+		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(receivedData)
+	respMetricsJSON(receivedData, w, status)
 }
 
+// UpdateMetricFromJSON updates or adds metrics received in request.
+//
+// @Summary Update or add metrics from JSON
+// @Description Updates or adds metrics received in request and returns the updated metrics.
+// @Tags Metrics
+// @ID update-metric-from-json
+// @Accept json
+// @Produce json
+// @Param data body metrics.Metric true "Metrics data"
+// @Success 200 {object} metrics.Metric "Updated metric"
+// @Failure 400
+// @Failure 500
+// @Router /update [post]
+//
+// Request data example:
+// Counter type:
+//
+//	{
+//		"id":"13eee119-cfaf-4b61-b101-41e26670a069",
+//		"type":"counter",
+//		"delta": 21
+//	}
+//
+// Gauge type:
+//
+//	{
+//		"id":"13eee119-cfaf-4b61-b101-41e26670a021",
+//		"type":"gauge",
+//		"value": 42.12
+//	}
+//
+// Returned data example:
+// Counter type:
+//
+//	{
+//		"id":"13eee119-cfaf-4b61-b101-41e26670a069",
+//		"type":"counter",
+//		"delta": 42
+//	}
+//
+// Gauge type:
+//
+//	{
+//		"id":"13eee119-cfaf-4b61-b101-41e26670a021",
+//		"type":"gauge",
+//		"value": 42.12
+//	}
 func (h *MetricRegistryHandler) UpdateMetricFromJSON(w http.ResponseWriter, r *http.Request) {
 	receivedData := metrics.Metric{}
 
 	if err := json.NewDecoder(r.Body).Decode(&receivedData); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
 		h.log.Debugf("Failed to decode JSON data: %v", err)
-		w.Write([]byte("Bad metric format"))
+		respEmptyJSON(w, http.StatusBadRequest)
 		return
 	}
 
 	value, err := receivedData.GetData()
 	if err != nil {
 		h.log.Debugf("Failed to get metric data: %v", err)
-		http.Error(w, "Bad metric data in request", http.StatusBadRequest)
+		respEmptyJSON(w, http.StatusBadRequest)
 		return
 	}
 
 	value, status, err := h.updateMetric(receivedData.MType, receivedData.ID, value)
 
-	respData, _ := metrics.NewMetric(receivedData.ID, value, receivedData.MType)
-
 	if err != nil {
 		h.log.Debugf("Failed to update metric: %v", err)
-		w.WriteHeader(status)
-		w.Write([]byte(value))
-	} else {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(status)
-		json.NewEncoder(w).Encode(respData)
+		respEmptyJSON(w, status)
+		return
 	}
+
+	respData, _ := metrics.NewMetric(receivedData.ID, value, receivedData.MType)
+	respMetricJSON(respData, w, status)
 }
 
 func NewMetricRegistryHandler(registry storage.Repository, logger log.Logger, minfo MetricURLInfo,
