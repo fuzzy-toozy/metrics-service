@@ -1,3 +1,4 @@
+// Provides handlers to access metrics storage.
 package handlers
 
 import (

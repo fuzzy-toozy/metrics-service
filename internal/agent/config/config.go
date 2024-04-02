@@ -1,3 +1,4 @@
+// Contains configuration for agent service
 package config
 
 import (
@@ -13,17 +14,28 @@ import (
 	"github.com/fuzzy-toozy/metrics-service/internal/log"
 )
 
+// Config structure containing various agent service configuration.
 type Config struct {
-	ServerAddress      string
-	ReportURL          string
-	ReportBulkURL      string
-	ReportEndpoint     string
+	// ServerAddress address of the metrics server to send metrics to.
+	ServerAddress string
+	// ReportURL server url to send data to (for single metric).
+	ReportURL string
+	// ReportBulkURL server url to send data to (for several metrics).
+	ReportBulkURL string
+	// ReportEndpoint server full endpoint url to send data to including schema (for single metric).
+	ReportEndpoint string
+	// ReportBulkEndpoint server full endpoint url to send data to including schema (for several metrics).
 	ReportBulkEndpoint string
-	CompressAlgo       string
-	RateLimit          uint
-	SecretKey          []byte
-	PollInterval       time.Duration
-	ReportInterval     time.Duration
+	// CompressAlgo name of compression algorithm to use (only gzip supported atm).
+	CompressAlgo string
+	// RateLimit max amount of concurrent connections to server.
+	RateLimit uint
+	// SecretKey secret key for signing sent data.
+	SecretKey []byte
+	// PollInterval interval for agent metrics polling.
+	PollInterval time.Duration
+	// ReportInterval interval for reporting metrics to server.
+	ReportInterval time.Duration
 }
 
 func getEndpoint(address, url string) string {
@@ -34,6 +46,7 @@ func getEndpoint(address, url string) string {
 	return serverEndpoint
 }
 
+// Print prints config values to stdout.
 func (c *Config) Print(log log.Logger) {
 	log.Infof("Agent running with config:")
 	log.Infof("Server address: %v", c.ServerAddress)
@@ -47,6 +60,7 @@ func (c *Config) Print(log log.Logger) {
 	log.Infof("Report interval: %v", c.ReportInterval)
 }
 
+// BuildConfig parses environment varialbes, command line parameters and builds agent's config.
 func BuildConfig() (*Config, error) {
 	c := Config{}
 	pollInterval := config.DurationOption{D: 2 * time.Second}

@@ -1,3 +1,4 @@
+// Server configuration.
 package config
 
 import (
@@ -12,18 +13,29 @@ import (
 )
 
 type Config struct {
-	ServerAddress  string
-	StoreFilePath  string
-	SecretKey      []byte
+	// ServerAddress address of the server eg localhost:8080.
+	ServerAddress string
+	// StoreFilePath path to store metrics storage backup (in case no database used).
+	StoreFilePath string
+	// StoreInterval interval between storage backups (in case no database used).
+	StoreInterval time.Duration
+	// RestoreData instructs to attempt to restore data from file backupt (in case no database used).
+	RestoreData bool
+	// SecretKey key to validate signature of sent data.
+	SecretKey []byte
+	// DatabaseConfig database configuration.
 	DatabaseConfig DBConfig
-	RestoreData    bool
-	MaxBodySize    uint64
-	ReadTimeout    time.Duration
-	WriteTimeout   time.Duration
-	IdleTimeout    time.Duration
-	StoreInterval  time.Duration
+	// MaxBodySize max size of http request body.
+	MaxBodySize uint64
+	// ReadTimeout timeout for reading request data from client.
+	ReadTimeout time.Duration
+	// WriteTimeout timeout for writing response data to client.
+	WriteTimeout time.Duration
+	// IdleTimeout maximum duration for which the server should keep an idle connection open before closing it.
+	IdleTimeout time.Duration
 }
 
+// Print writes server configuration to log.
 func (c *Config) Print(logger log.Logger) {
 	logger.Infof("Server running with config:")
 	logger.Infof("Server address: %v", c.ServerAddress)
@@ -39,6 +51,8 @@ func (c *Config) Print(logger log.Logger) {
 	c.DatabaseConfig.Print(logger)
 }
 
+// BuildConfig parses command line parameters and environment variables
+// and builds configuration from parsed data.
 func BuildConfig() (*Config, error) {
 	var c Config
 	c.MaxBodySize = 1024 * 1024
@@ -79,7 +93,7 @@ func BuildConfig() (*Config, error) {
 	c.IdleTimeout = idleTimeout.D
 	c.StoreInterval = storeInterval.D
 
-	err = c.parseEnvVariables()
+	err = c.ParseEnvVariables()
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +105,9 @@ func BuildConfig() (*Config, error) {
 	return &c, nil
 }
 
-func (c *Config) parseEnvVariables() error {
+// ParseEnvVariables parses environment variables
+// and builds configuration from parsed data.
+func (c *Config) ParseEnvVariables() error {
 	type EnvConfig struct {
 		ServerAddress string `env:"ADDRESS"`
 		StoreInterval string `env:"STORE_INTERVAL"`

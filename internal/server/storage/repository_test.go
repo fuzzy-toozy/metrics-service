@@ -1,9 +1,13 @@
 package storage
 
 import (
+	"math/rand"
+	"strconv"
 	"testing"
 
+	"github.com/beevik/guid"
 	"github.com/fuzzy-toozy/metrics-service/internal/metrics"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -16,7 +20,7 @@ type MetricTestData struct {
 	invalidMetricVals []string
 }
 
-func TestMetricsRepo(t *testing.T) {
+func Test_MetricsRepo(t *testing.T) {
 	repo := NewCommonMetricsRepository()
 	data := []MetricTestData{
 		{
@@ -51,6 +55,38 @@ func TestMetricsRepo(t *testing.T) {
 			afterUpdateVal:    "19999",
 			invalidMetricVals: []string{"vni, 9999.9999"},
 		},
+	}
+
+	_, err := repo.AddOrUpdate("k", "v", "garbage")
+	assert.Error(t, err)
+
+	_, err = repo.AddOrUpdate("k", "v", metrics.CounterMetricType)
+	assert.Error(t, err)
+
+	_, err = repo.Get("k", "garbage")
+	assert.Error(t, err)
+
+	num := int(rand.Int31()) % 100
+	check := make(map[string]int64, num)
+	for i := 0; i < num; i++ {
+		id := guid.NewString()
+		valInt := rand.Int63()
+		check[id] = valInt
+
+		valStr := strconv.FormatInt(valInt, 10)
+		v, err := repo.AddOrUpdate(id, valStr, metrics.CounterMetricType)
+		require.NoError(t, err)
+		require.Equal(t, v, valStr)
+	}
+
+	repoMetrics, err := repo.GetAll()
+	require.NoError(t, err)
+
+	for _, m := range repoMetrics {
+		v, ok := check[m.ID]
+		require.True(t, ok)
+		require.NotNil(t, m.Delta)
+		assert.Equal(t, v, *m.Delta)
 	}
 
 	for _, d := range data {

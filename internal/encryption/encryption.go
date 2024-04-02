@@ -1,3 +1,4 @@
+// Module for signing and checking signature.
 package encryption
 
 import (

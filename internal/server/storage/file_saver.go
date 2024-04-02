@@ -18,6 +18,7 @@ type PeriodicSaver struct {
 	done         chan struct{}
 	log          logging.Logger
 	storageSaver StorageSaver
+	ticker       *time.Ticker
 }
 
 type FileSaver struct {
@@ -47,7 +48,7 @@ func (s *FileSaver) Save() error {
 
 func (s *PeriodicSaver) Run() {
 	s.wg.Add(1)
-
+	s.ticker = time.NewTicker(s.period)
 	go func() {
 		defer s.wg.Done()
 	out:
@@ -59,7 +60,7 @@ func (s *PeriodicSaver) Run() {
 					s.log.Errorf("Saving data before exit failed: %v", err)
 				}
 				break out
-			case <-time.After(s.period):
+			case <-s.ticker.C:
 				err := s.storageSaver.Save()
 				if err != nil {
 					s.log.Errorf("Saving data failed: %v", err)

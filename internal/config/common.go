@@ -1,3 +1,4 @@
+// Duration option for use in configuration.
 package config
 
 import (

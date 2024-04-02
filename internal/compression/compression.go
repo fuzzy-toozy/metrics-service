@@ -1,3 +1,4 @@
+// Compression/Decompression support to use in handlers
 package compression
 
 import (

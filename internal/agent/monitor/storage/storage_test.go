@@ -4,10 +4,11 @@ import (
 	"testing"
 
 	"github.com/fuzzy-toozy/metrics-service/internal/metrics"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestMetricsStorage(t *testing.T) {
+func Test_MetricsStorage(t *testing.T) {
 	storage := NewCommonMetricsStorage()
 	gaugeMetrics := map[string]float64{
 		"one":   10.10,
@@ -45,4 +46,7 @@ func TestMetricsStorage(t *testing.T) {
 		require.NotNil(t, m.Delta)
 		require.Equal(t, v, *m.Delta)
 	}
+
+	storage.Clear()
+	assert.Equal(t, 0, len(storage.storage))
 }
