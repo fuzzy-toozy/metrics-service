@@ -83,8 +83,8 @@ func NewAgent(config config.Config, logger log.Logger, opts ...configOption) (*A
 	return &a, nil
 }
 
-func newWorker(config *config.Config, logger log.Logger) *worker {
-	w := worker{httpClient: monitorHttp.NewDefaultHTTPClient(), log: logger, config: config}
+func newWorker(config *config.Config, logger log.Logger, client monitorHttp.HTTPClient) *worker {
+	w := worker{httpClient: client, log: logger, config: config}
 	b := buffers{data: bytes.Buffer{}, compression: bytes.Buffer{}}
 	w.buffs = b
 	return &w
@@ -264,7 +264,7 @@ func (a *Agent) Run() {
 		i := i
 		go func() {
 			defer wg.Done()
-			w := newWorker(&a.config, a.log)
+			w := newWorker(&a.config, a.log, monitorHttp.NewDefaultHTTPClient())
 			for {
 				select {
 				case data := <-gatherChan:

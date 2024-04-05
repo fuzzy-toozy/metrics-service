@@ -65,8 +65,6 @@ func (h *MetricRegistryHandler) getMetric(name string, mtype string) (val string
 }
 
 func (h *MetricRegistryHandler) GetMetric(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/plain")
-
 	metricType := strings.ToLower(chi.URLParam(r, h.metricInfo.Type))
 
 	metricName := chi.URLParam(r, h.metricInfo.Name)
@@ -77,6 +75,7 @@ func (h *MetricRegistryHandler) GetMetric(w http.ResponseWriter, r *http.Request
 		h.log.Debugf("failed to get metric: %v", err)
 	}
 
+	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(status)
 	w.Write([]byte(val))
 }
@@ -111,7 +110,7 @@ func (h *MetricRegistryHandler) GetMetricJSON(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	w.Header().Add("Content-Type", "application/json")
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(respData)
 }
@@ -179,7 +178,7 @@ func (h *MetricRegistryHandler) GetAllMetrics(w http.ResponseWriter, r *http.Req
 		h.allMetrics = tmpl
 	}
 
-	w.Header().Add("Content-Type", "text/html")
+	w.Header().Set("Content-Type", "text/html")
 	w.WriteHeader(http.StatusOK)
 	h.allMetrics.Execute(w, metrics)
 }
@@ -219,11 +218,11 @@ func (h *MetricRegistryHandler) UpdateMetric(w http.ResponseWriter, r *http.Requ
 
 func (h *MetricRegistryHandler) UpdateMetricsFromJSON(w http.ResponseWriter, r *http.Request) {
 	receivedData := make([]metrics.Metric, 0)
-
 	if err := json.NewDecoder(r.Body).Decode(&receivedData); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		h.log.Debugf("Failed to decode JSON data: %v", err)
 		w.Write([]byte("Bad metric format"))
+
 		return
 	}
 
@@ -234,16 +233,9 @@ func (h *MetricRegistryHandler) UpdateMetricsFromJSON(w http.ResponseWriter, r *
 		http.Error(w, "", status)
 	}
 
-	respMetrics, err := h.registry.GetAll()
-	status = errtypes.ErrorToStatus(err)
-	if err != nil {
-		h.log.Errorf("Failed to add metrics: %v", err)
-		http.Error(w, "", status)
-	}
-
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(respMetrics)
+	json.NewEncoder(w).Encode(receivedData)
 }
 
 func (h *MetricRegistryHandler) UpdateMetricFromJSON(w http.ResponseWriter, r *http.Request) {
