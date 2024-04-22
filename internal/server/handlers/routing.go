@@ -1,17 +1,22 @@
-package routing
+package handlers
 
 import (
 	"fmt"
 	"net/http"
 
-	"github.com/fuzzy-toozy/metrics-service/internal/server/handlers"
 	"github.com/go-chi/chi"
 	"github.com/go-chi/chi/middleware"
 )
 
-func SetupRouting(h *handlers.MetricRegistryHandler) http.Handler {
+func SetupRouting(h *MetricRegistryHandler) http.Handler {
 	r := chi.NewRouter()
 	minfo := h.GetMetricURLInfo()
+	swaggerHandler := http.FileServer(http.Dir("./docs"))
+	r.Route("/swagger", func(r chi.Router) {
+		r.Get("/*", func(w http.ResponseWriter, r *http.Request) {
+			http.StripPrefix("/swagger/", swaggerHandler).ServeHTTP(w, r)
+		})
+	})
 
 	r.Route("/ping", func(r chi.Router) {
 		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

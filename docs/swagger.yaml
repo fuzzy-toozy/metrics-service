@@ -1,0 +1,229 @@
+definitions:
+  metrics.Metric:
+    properties:
+      delta:
+        description: Delta metric value used for Counter metric type
+        type: integer
+      id:
+        description: ID metric name
+        type: string
+      type:
+        description: MType metric type (Gauge or Counter)
+        type: string
+      value:
+        description: Value metric value used for Gauge metric type
+        type: number
+    type: object
+info:
+  contact: {}
+paths:
+  /:
+    get:
+      consumes:
+      - text/html
+      description: Returns all stored metrics in an HTML table.
+      operationId: get-all-metrics
+      produces:
+      - text/html
+      responses:
+        "200":
+          description: <!DOCTYPE html>...
+          schema:
+            type: string
+        "500":
+          description: Internal Server Error
+          schema:
+            type: string
+      summary: Get All Metrics
+      tags:
+      - Metrics
+  /ping:
+    get:
+      description: Pings the database to check its availability.
+      produces:
+      - text/plain
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: string
+        "500":
+          description: Internal Server Error
+          schema:
+            type: string
+      summary: Health Check
+      tags:
+      - Health
+  /update:
+    post:
+      consumes:
+      - application/json
+      description: Updates or adds metrics received in request and returns the updated
+        metrics.
+      operationId: update-metric-from-json
+      parameters:
+      - description: Metrics data
+        in: body
+        name: data
+        required: true
+        schema:
+          $ref: '#/definitions/metrics.Metric'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Updated metric
+          schema:
+            $ref: '#/definitions/metrics.Metric'
+        "400":
+          description: Bad Request
+        "500":
+          description: Internal Server Error
+      summary: Update or add metrics from JSON
+      tags:
+      - Metrics
+  /update/{metricType}/{metricName}/{metricValue}:
+    post:
+      consumes:
+      - text/plain
+      description: Updates the specified metric with the provided value.
+      operationId: update-metric
+      parameters:
+      - description: Name of the metric to update
+        in: path
+        name: metricName
+        required: true
+        type: string
+      - description: Type of the metric to update
+        in: path
+        name: metricType
+        required: true
+        type: string
+      - description: Value to update the metric with
+        in: path
+        name: metricValue
+        required: true
+        type: string
+      produces:
+      - text/plain
+      responses:
+        "200":
+          description: Updated metric value
+          schema:
+            type: string
+        "400":
+          description: Bad Request
+          schema:
+            type: string
+        "404":
+          description: Not Found
+          schema:
+            type: string
+        "500":
+          description: Internal Server Error
+          schema:
+            type: string
+      summary: Update Metric
+      tags:
+      - Metrics
+  /updates:
+    post:
+      consumes:
+      - application/json
+      description: Updates or adds metrics received in request and returns the updated
+        metrics.
+      operationId: update-metrics-from-json
+      parameters:
+      - description: Metrics data
+        in: body
+        name: data
+        required: true
+        schema:
+          items:
+            $ref: '#/definitions/metrics.Metric'
+          type: array
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Updated metrics
+          schema:
+            items:
+              $ref: '#/definitions/metrics.Metric'
+            type: array
+        "400":
+          description: Bad Request
+        "500":
+          description: Internal Server Error
+      summary: Update or add metrics from JSON
+      tags:
+      - Metrics
+  /value:
+    post:
+      consumes:
+      - application/json
+      description: Gets requested metric by id and type and returns it's id, type
+        and value in JSON format.
+      operationId: get-metric-json
+      parameters:
+      - description: Metric data
+        in: body
+        name: metric
+        required: true
+        schema:
+          $ref: '#/definitions/metrics.Metric'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+        "400":
+          description: Bad Request
+        "404":
+          description: Not Found
+        "500":
+          description: Internal Server Error
+      summary: Get Metric JSON
+      tags:
+      - Metrics
+  /value/{metricType}/{metricName}:
+    get:
+      consumes:
+      - text/plain
+      description: searches metric by id and type and returns it's value in plain
+        text.
+      operationId: get-metric
+      parameters:
+      - description: Name of the metric to retrieve
+        in: path
+        name: metricName
+        required: true
+        type: string
+      - description: Type of the metric to retrieve
+        in: path
+        name: metricType
+        required: true
+        type: string
+      produces:
+      - text/plain
+      responses:
+        "200":
+          description: Mertic value
+          schema:
+            type: string
+        "400":
+          description: Bad Request
+          schema:
+            type: string
+        "404":
+          description: Not Found
+          schema:
+            type: string
+        "500":
+          description: Internal Server Error
+          schema:
+            type: string
+      summary: Get Metric
+      tags:
+      - Metrics
+swagger: "2.0"

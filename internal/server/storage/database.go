@@ -163,7 +163,8 @@ func (r *PGMetricRepository) AddMetricsBulk(metricsData []metrics.Metric) error 
 
 		defer stmt.Close()
 
-		for i, m := range metricsData {
+		for i := range metricsData {
+			m := &metricsData[i]
 			val, err := m.GetData()
 			if err != nil {
 				return errtypes.MakeBadDataError(fmt.Errorf("invalid data for metric '%v': %w", m.ID, err))
@@ -182,9 +183,6 @@ func (r *PGMetricRepository) AddMetricsBulk(metricsData []metrics.Metric) error 
 			if err != nil {
 				return errtypes.MakeServerError(fmt.Errorf("failed to execute query '%v' for metric '%v': %w", r.queryConfig.update, m.ID, err))
 			}
-
-			updatedVal, _ := m.GetData()
-			metricsData[i].UpdateData(updatedVal)
 		}
 
 		err = tx.Commit()

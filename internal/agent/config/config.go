@@ -129,7 +129,7 @@ func (c *Config) parseEnvVariables() error {
 	}
 
 	if ecfg.ReportInterval > 0 {
-		c.PollInterval = time.Duration(ecfg.ReportInterval) * time.Second
+		c.ReportInterval = time.Duration(ecfg.ReportInterval) * time.Second
 	}
 
 	if ecfg.RateLimit > 0 {

@@ -11,7 +11,6 @@ import (
 	logging "github.com/fuzzy-toozy/metrics-service/internal/log"
 	"github.com/fuzzy-toozy/metrics-service/internal/server/config"
 	"github.com/fuzzy-toozy/metrics-service/internal/server/handlers"
-	"github.com/fuzzy-toozy/metrics-service/internal/server/routing"
 	"github.com/fuzzy-toozy/metrics-service/internal/server/storage"
 	"golang.org/x/sync/errgroup"
 )
@@ -79,7 +78,7 @@ func NewServer(logger logging.Logger) (*Server, error) {
 		}
 	}
 
-	serverHandler := routing.SetupRouting(registryHandler)
+	serverHandler := handlers.SetupRouting(registryHandler)
 
 	if s.config.SecretKey != nil {
 		serverHandler = handlers.WithSignatureCheck(serverHandler, logger, config.SecretKey)
@@ -137,6 +136,10 @@ func (s *Server) Run() error {
 	})
 
 	return g.Wait()
+}
+
+func (s *Server) Stop() {
+	s.stop()
 }
 
 func NewDefaultHTTPServer(config config.Config, logger logging.Logger, handler http.Handler) *http.Server {
