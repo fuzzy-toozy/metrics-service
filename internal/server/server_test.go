@@ -126,7 +126,7 @@ func TestMetrics(t *testing.T) {
 	registry := storage.NewCommonMetricsRepository()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := handlers.NewMetricRegistryHandler(registry, log.NewDevZapLogger(),
+			h := handlers.NewMetricRegistryHandler(registry, log.NewDummyLogger(),
 				handlers.MetricURLInfo{Type: "mtype", Name: "mname", Value: "mval"}, nil, config.DBConfig{})
 			r := routing.SetupRouting(h)
 			r.ServeHTTP(tt.args.w, tt.args.r)

@@ -3,7 +3,6 @@ package storage
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -56,13 +55,27 @@ func (r *CommonMetricsRepository) Close() error {
 }
 
 func (r *CommonMetricsRepository) AddMetricsBulk(metrics []metrics.Metric) error {
-	return errors.New("not implemented")
+	for i, m := range metrics {
+		val, err := m.GetData()
+		if err != nil {
+			return err
+		}
+		uVal, err := r.AddOrUpdate(m.ID, val, m.MType)
+		if err != nil {
+			return err
+		}
+
+		err = metrics[i].SetData(uVal)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (r *CommonMetricsRepository) AddOrUpdate(key string, val string, mtype string) (string, error) {
 	r.lock.Lock()
 	defer r.lock.Unlock()
-
 	if !metrics.IsValidMetricType(mtype) {
 		return "", errtypes.MakeBadDataError(fmt.Errorf("invalid metric type %v", mtype))
 	}
