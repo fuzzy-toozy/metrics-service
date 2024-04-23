@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"testing"
 
 	"github.com/beevik/guid"
@@ -21,7 +22,10 @@ func makeJSONMetricReq(m metrics.Metric) []byte {
 	buffer := bytes.NewBuffer(nil)
 	m.Delta = nil
 	m.Value = nil
-	json.NewEncoder(buffer).Encode(m)
+	err := json.NewEncoder(buffer).Encode(m)
+	if err != nil {
+		panic(fmt.Sprintf("failed to encode metric %v", err))
+	}
 	return buffer.Bytes()
 }
 
@@ -37,12 +41,18 @@ func makeRandomMetric() metrics.Metric {
 func makeRandomMetricJSON() []byte {
 	m := makeRandomMetric()
 	buf := bytes.NewBuffer(nil)
-	json.NewEncoder(buf).Encode(m)
+	err := json.NewEncoder(buf).Encode(m)
+	if err != nil {
+		panic(fmt.Sprintf("failed to encode metric %v", err))
+	}
 	return buf.Bytes()
 }
 
 func getMetricValPath(m metrics.Metric) string {
-	val, _ := m.GetData()
+	val, err := m.GetData()
+	if err != nil {
+		panic(fmt.Sprintf("Failed to get meric data: %v", err))
+	}
 	return fmt.Sprintf("/%v/%v/%v", m.MType, m.ID, val)
 }
 
@@ -57,13 +67,19 @@ func makeRandomGaugeMetricPath() string {
 
 func makeRandomCounterMetricPath() string {
 	m := metrics.NewCounterMetric(guid.NewString(), int64(rand.Uint64()))
-	val, _ := m.GetData()
+	val, err := m.GetData()
+	if err != nil {
+		panic(fmt.Sprintf("Failed to get meric data: %v", err))
+	}
 	return fmt.Sprintf("/%v/%v/%v", m.MType, m.ID, val)
 }
 
 func makeMetricsJSON(m []metrics.Metric) []byte {
 	buf := bytes.NewBuffer(nil)
-	json.NewEncoder(buf).Encode(m)
+	err := json.NewEncoder(buf).Encode(m)
+	if err != nil {
+		panic(fmt.Sprintf("failed to encode metric %v", err))
+	}
 	return buf.Bytes()
 }
 
@@ -97,7 +113,10 @@ func newSimpleHandler(h http.Handler, url string, method string, contentType str
 
 func (h *rewindHandler) ServeHTTP(w http.ResponseWriter) {
 	h.handler.ServeHTTP(w, h.r)
-	h.buf.Seek(0, 0)
+	_, err := h.buf.Seek(0, 0)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to seek buffer: %v", err))
+	}
 }
 
 func newRewindHandler(h http.Handler, url string, method string, contentType string, data []byte) *rewindHandler {
@@ -162,7 +181,8 @@ func BenchmarkHandlers(b *testing.B) {
 			gaugeHandlers[rand.Int()%metricsNum].ServeHTTP(res)
 			resp := res.Result()
 			status := resp.StatusCode
-			resp.Body.Close()
+			err := resp.Body.Close()
+			runtime.KeepAlive(err)
 
 			if status != http.StatusOK {
 				fmt.Printf("Failed request %v\n", status)
@@ -177,7 +197,8 @@ func BenchmarkHandlers(b *testing.B) {
 			counterHandlers[rand.Int()%metricsNum].ServeHTTP(res)
 			resp := res.Result()
 			status := resp.StatusCode
-			resp.Body.Close()
+			err := resp.Body.Close()
+			runtime.KeepAlive(err)
 
 			if status != http.StatusOK {
 				fmt.Printf("Failed request %v\n", status)
@@ -192,7 +213,8 @@ func BenchmarkHandlers(b *testing.B) {
 			jsonHandlers[rand.Int()%metricsNum].ServeHTTP(res)
 			resp := res.Result()
 			status := resp.StatusCode
-			resp.Body.Close()
+			err := resp.Body.Close()
+			runtime.KeepAlive(err)
 
 			if status != http.StatusOK {
 				fmt.Printf("Failed request %v\n", status)
@@ -207,7 +229,8 @@ func BenchmarkHandlers(b *testing.B) {
 			jsonBulkHandlers[rand.Int()%metricsNum].ServeHTTP(res)
 			resp := res.Result()
 			status := resp.StatusCode
-			resp.Body.Close()
+			err := resp.Body.Close()
+			runtime.KeepAlive(err)
 
 			if status != http.StatusOK {
 				fmt.Printf("Failed request %v\n", status)
@@ -231,7 +254,8 @@ func BenchmarkHandlers(b *testing.B) {
 			serverHandler.ServeHTTP(res, getValTests[rand.Int()%metricsNum])
 			resp := res.Result()
 			status := resp.StatusCode
-			resp.Body.Close()
+			err := resp.Body.Close()
+			runtime.KeepAlive(err)
 
 			if status != http.StatusOK {
 				fmt.Printf("Failed reques %v\n", status)
@@ -254,7 +278,8 @@ func BenchmarkHandlers(b *testing.B) {
 			getValJSONTests[rand.Int()%metricsNum].ServeHTTP(res)
 			resp := res.Result()
 			status := resp.StatusCode
-			resp.Body.Close()
+			err := resp.Body.Close()
+			runtime.KeepAlive(err)
 
 			if status != http.StatusOK {
 				fmt.Printf("Failed reques %v\n", status)

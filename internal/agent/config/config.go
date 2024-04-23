@@ -1,4 +1,4 @@
-// Contains configuration for agent service
+// Package config contains configuration for agent service
 package config
 
 import (
@@ -28,14 +28,14 @@ type Config struct {
 	ReportBulkEndpoint string
 	// CompressAlgo name of compression algorithm to use (only gzip supported atm).
 	CompressAlgo string
-	// RateLimit max amount of concurrent connections to server.
-	RateLimit uint
 	// SecretKey secret key for signing sent data.
 	SecretKey []byte
 	// PollInterval interval for agent metrics polling.
 	PollInterval time.Duration
 	// ReportInterval interval for reporting metrics to server.
 	ReportInterval time.Duration
+	// RateLimit max amount of concurrent connections to server.
+	RateLimit uint
 }
 
 func getEndpoint(address, url string) string {
@@ -63,8 +63,13 @@ func (c *Config) Print(log log.Logger) {
 // BuildConfig parses environment varialbes, command line parameters and builds agent's config.
 func BuildConfig() (*Config, error) {
 	c := Config{}
-	pollInterval := config.DurationOption{D: 2 * time.Second}
-	reportInterval := config.DurationOption{D: 10 * time.Second}
+
+	const defaultConcurentConnections = 20
+	const defaultPollIntervalSec = 2
+	const defaultReportIntervalSec = 10
+
+	pollInterval := config.DurationOption{D: defaultPollIntervalSec * time.Second}
+	reportInterval := config.DurationOption{D: defaultReportIntervalSec * time.Second}
 	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
 	c.CompressAlgo = "gzip"
 
@@ -74,7 +79,7 @@ func BuildConfig() (*Config, error) {
 	flag.StringVar(&c.ServerAddress, "a", "localhost:8080", "Server address")
 	flag.StringVar(&c.ReportURL, "u", "/update", "Server endpoint path")
 	flag.StringVar(&c.ReportBulkURL, "ub", "/updates", "Server endpoint path")
-	flag.UintVar(&c.RateLimit, "l", 20, "Max concurent connections")
+	flag.UintVar(&c.RateLimit, "l", defaultConcurentConnections, "Max concurent connections")
 
 	flag.Var(&pollInterval, "p", "Metrics polling interval(seconds)")
 	flag.Var(&reportInterval, "r", "Metrics report interval(seconds)")

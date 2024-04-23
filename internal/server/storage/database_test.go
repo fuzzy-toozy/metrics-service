@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/beevik/guid"
+	"github.com/fuzzy-toozy/metrics-service/internal/log"
 	"github.com/fuzzy-toozy/metrics-service/internal/metrics"
 	"github.com/fuzzy-toozy/metrics-service/internal/server/config"
 	"github.com/stretchr/testify/require"
@@ -27,7 +28,7 @@ func Test_Database(t *testing.T) {
 
 	stopCtx, stopFunc := context.WithCancel(context.TODO())
 	defer stopFunc()
-	repo, err := NewPGMetricRepository(cfg.DatabaseConfig, NewDefaultDBRetryExecutor(stopCtx))
+	repo, err := NewPGMetricRepository(cfg.DatabaseConfig, NewDefaultDBRetryExecutor(stopCtx), log.NewDevZapLogger())
 	require.NoError(t, err)
 
 	require.NoError(t, repo.HealthCheck())

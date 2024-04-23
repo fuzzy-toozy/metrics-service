@@ -1,4 +1,4 @@
-// Server configuration.
+// Package config Server configuration.
 package config
 
 import (
@@ -12,19 +12,24 @@ import (
 	"github.com/fuzzy-toozy/metrics-service/internal/log"
 )
 
+const defaultMaxBodySize = 1048576
+const defaultPingTimeout = 2
+const defaultCommonTimeout = 30
+const defaultStoreInterval = 300
+
 type Config struct {
 	// ServerAddress address of the server eg localhost:8080.
 	ServerAddress string
 	// StoreFilePath path to store metrics storage backup (in case no database used).
 	StoreFilePath string
-	// StoreInterval interval between storage backups (in case no database used).
-	StoreInterval time.Duration
-	// RestoreData instructs to attempt to restore data from file backupt (in case no database used).
-	RestoreData bool
 	// SecretKey key to validate signature of sent data.
 	SecretKey []byte
 	// DatabaseConfig database configuration.
 	DatabaseConfig DBConfig
+	// StoreInterval interval between storage backups (in case no database used).
+	StoreInterval time.Duration
+	// RestoreData instructs to attempt to restore data from file backupt (in case no database used).
+	RestoreData bool
 	// MaxBodySize max size of http request body.
 	MaxBodySize uint64
 	// ReadTimeout timeout for reading request data from client.
@@ -55,16 +60,16 @@ func (c *Config) Print(logger log.Logger) {
 // and builds configuration from parsed data.
 func BuildConfig() (*Config, error) {
 	var c Config
-	c.MaxBodySize = 1024 * 1024
+	c.MaxBodySize = defaultMaxBodySize
 	c.DatabaseConfig.DriverName = "pgx"
-	c.DatabaseConfig.PingTimeout = 2 * time.Second
+	c.DatabaseConfig.PingTimeout = defaultPingTimeout * time.Second
 	var secretKey string
 
-	defaultTimeout := 30 * time.Second
+	defaultTimeout := defaultCommonTimeout * time.Second
 	readTimeout := config.DurationOption{D: defaultTimeout}
 	writeTimeout := config.DurationOption{D: defaultTimeout}
 	idleTimeout := config.DurationOption{D: defaultTimeout}
-	storeInterval := config.DurationOption{D: 300 * time.Second}
+	storeInterval := config.DurationOption{D: defaultStoreInterval * time.Second}
 
 	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
 	flag.StringVar(&secretKey, "k", "", "Sever secret key")

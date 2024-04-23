@@ -1,5 +1,7 @@
 package handlers
 
+// Signature checking middleware
+
 import (
 	"bytes"
 	"io"
@@ -22,7 +24,11 @@ func WithSignatureCheck(h http.Handler, log logging.Logger, key []byte) http.Han
 			http.Error(w, "", http.StatusInternalServerError)
 			return
 		}
-		r.Body.Close()
+
+		err = r.Body.Close()
+		if err != nil {
+			log.Errorf("Failed to close request body: %v", err)
+		}
 
 		err = encryption.CheckData(body, key, signature)
 		if err != nil {

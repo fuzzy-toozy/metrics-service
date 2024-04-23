@@ -1,4 +1,4 @@
-// Server database config
+// Package config Server database config
 package config
 
 import (
@@ -9,12 +9,12 @@ import (
 
 // DBConfig database configuration.
 type DBConfig struct {
-	// UseDatabase flag indicating to use database or not.
-	UseDatabase bool
 	// ConnString database connection string.
 	ConnString string
 	// DriverName database driver name.
 	DriverName string
+	// UseDatabase flag indicating to use database or not.
+	UseDatabase bool
 	// PingTimeout timeout for database operations.
 	PingTimeout time.Duration
 }

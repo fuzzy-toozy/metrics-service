@@ -1,5 +1,6 @@
-// Provides middleware to log request parameters.
 package handlers
+
+// Provides middleware to log request parameters.
 
 import (
 	"net/http"

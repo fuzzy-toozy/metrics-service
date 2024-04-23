@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"runtime"
 	"sync"
 	"time"
 
@@ -49,7 +50,8 @@ func setupServer() error {
 		var conn net.Conn
 		conn, err = net.DialTimeout("tcp", net.JoinHostPort("localhost", "8090"), 1*time.Second)
 		if err == nil {
-			conn.Close()
+			errc := conn.Close()
+			runtime.KeepAlive(errc)
 			break
 		}
 	}
@@ -62,7 +64,10 @@ func setupServer() error {
 }
 
 func tearDownServer() {
-	serverApp.Shutdown(context.Background())
+	err := serverApp.Shutdown(context.Background())
+	if err != nil {
+		fmt.Printf("Shutdown server: %v", err)
+	}
 	serverWg.Wait()
 }
 
@@ -101,11 +106,16 @@ func ExampleMetricRegistryHandler_UpdateMetricFromJSON() {
 		return
 	}
 
-	defer resp.Body.Close()
+	defer func() {
+		err = resp.Body.Close()
+		if err != nil {
+			fmt.Printf("Failed to close body: %v\n", err)
+		}
+	}()
 
 	fmt.Println(string(respBuf))
 
-	// Output: {"id":"metricId","type":"gauge","value":11.22}
+	// Output: {"value":11.22,"id":"metricId","type":"gauge"}
 }
 
 func ExampleMetricRegistryHandler_UpdateMetricsFromJSON() {
@@ -143,11 +153,16 @@ func ExampleMetricRegistryHandler_UpdateMetricsFromJSON() {
 		return
 	}
 
-	defer resp.Body.Close()
+	defer func() {
+		err = resp.Body.Close()
+		if err != nil {
+			fmt.Printf("Failed to close body: %v\n", err)
+		}
+	}()
 
 	fmt.Println(string(respBuf))
 
-	// Output: [{"id":"metricId1","type":"gauge","value":11.22},{"id":"metricId2","type":"counter","delta":31}]
+	// Output: [{"value":11.22,"id":"metricId1","type":"gauge"},{"delta":31,"id":"metricId2","type":"counter"}]
 }
 
 func ExampleMetricRegistryHandler_UpdateMetric() {
@@ -186,7 +201,12 @@ func ExampleMetricRegistryHandler_UpdateMetric() {
 		return
 	}
 
-	defer resp.Body.Close()
+	defer func() {
+		err = resp.Body.Close()
+		if err != nil {
+			fmt.Printf("Failed to close body: %v\n", err)
+		}
+	}()
 
 	fmt.Println(string(respBuf))
 
@@ -229,7 +249,10 @@ func ExampleMetricRegistryHandler_GetMetric() {
 		return
 	}
 
-	resp.Body.Close()
+	err = resp.Body.Close()
+	if err != nil {
+		fmt.Printf("Failed to close body: %v\n", err)
+	}
 
 	reqURL = fmt.Sprintf("%v/%v/%v/%v", serverURL, "value", metricType, metricName)
 
@@ -245,7 +268,12 @@ func ExampleMetricRegistryHandler_GetMetric() {
 		return
 	}
 
-	defer resp.Body.Close()
+	defer func() {
+		err = resp.Body.Close()
+		if err != nil {
+			fmt.Printf("Failed to close body: %v\n", err)
+		}
+	}()
 
 	respBuf, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -293,7 +321,10 @@ func ExampleMetricRegistryHandler_GetMetricJSON() {
 		return
 	}
 
-	resp.Body.Close()
+	err = resp.Body.Close()
+	if err != nil {
+		fmt.Printf("Failed to close body: %v\n", err)
+	}
 
 	reqURL = fmt.Sprintf("%v/%v", serverURL, "value")
 	reqData := fmt.Sprintf("{ \"id\": \"%v\", \"type\": \"%v\"}", metricName, metricType)
@@ -312,7 +343,12 @@ func ExampleMetricRegistryHandler_GetMetricJSON() {
 		return
 	}
 
-	defer resp.Body.Close()
+	defer func() {
+		err = resp.Body.Close()
+		if err != nil {
+			fmt.Printf("Failed to close body: %v\n", err)
+		}
+	}()
 
 	respBuf, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -321,5 +357,5 @@ func ExampleMetricRegistryHandler_GetMetricJSON() {
 	}
 
 	fmt.Println(string(respBuf))
-	// Output: {"id":"metricId","type":"gauge","value":42.42}
+	// Output: {"value":42.42,"id":"metricId","type":"gauge"}
 }

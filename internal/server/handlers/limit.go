@@ -1,5 +1,6 @@
-// Provides middleware to limit request body size.
 package handlers
+
+// Provides middleware to limit request body size.
 
 import (
 	"net/http"

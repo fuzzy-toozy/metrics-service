@@ -1,3 +1,4 @@
+// Package storage Metrics storage to store fetched metrics.
 package storage
 
 import (

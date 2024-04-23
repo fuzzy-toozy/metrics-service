@@ -1,4 +1,4 @@
-// Compression/Decompresion algorithms for handlers
+// Package common Compression/Decompresion algorithms for handlers
 package common
 
 import (
@@ -17,12 +17,12 @@ type RetryExecutor interface {
 type CommonRetryExecutor struct {
 	// stopCtx context to stop retry executor by calling cancel.
 	stopCtx context.Context
+	// errs in case any of these errors returned by callback - retry callback execution
+	errs []error
 	// retryDelta this amount of time is added to wait time between retries each retry attempt.
 	retryDelta time.Duration
 	// retriesCount number of retry attempts
 	retriesCount uint
-	// errs in case any of these errors returned by callback - retry callback execution
-	errs []error
 }
 
 func errorIsOneOf(target error, expected []error) bool {

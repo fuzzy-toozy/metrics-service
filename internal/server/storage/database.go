@@ -1,3 +1,4 @@
+// Package storage Contains server metrics storage implementations.
 package storage
 
 import (
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/fuzzy-toozy/metrics-service/internal/common"
+	logging "github.com/fuzzy-toozy/metrics-service/internal/log"
 	"github.com/fuzzy-toozy/metrics-service/internal/metrics"
 	"github.com/fuzzy-toozy/metrics-service/internal/server/config"
 	"github.com/fuzzy-toozy/metrics-service/internal/server/errtypes"
@@ -65,13 +67,14 @@ func BuildPGQueryConfig(tableName string) PGQueryConfig {
 }
 
 type PGMetricRepository struct {
-	dbConfig      config.DBConfig
-	queryConfig   PGQueryConfig
+	log           logging.Logger
 	db            *sql.DB
 	retryExecutor common.RetryExecutor
+	queryConfig   PGQueryConfig
+	dbConfig      config.DBConfig
 }
 
-func NewPGMetricRepository(dbConfig config.DBConfig, retryExecutor common.RetryExecutor) (*PGMetricRepository, error) {
+func NewPGMetricRepository(dbConfig config.DBConfig, retryExecutor common.RetryExecutor, log logging.Logger) (*PGMetricRepository, error) {
 	db, err := sql.Open(dbConfig.DriverName, dbConfig.ConnString)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
@@ -92,7 +95,7 @@ func NewPGMetricRepository(dbConfig config.DBConfig, retryExecutor common.RetryE
 	if err != nil {
 		return nil, err
 	}
-	return &PGMetricRepository{dbConfig: dbConfig, queryConfig: BuildPGQueryConfig("Metrics"), db: db, retryExecutor: retryExecutor}, nil
+	return &PGMetricRepository{dbConfig: dbConfig, queryConfig: BuildPGQueryConfig("Metrics"), db: db, retryExecutor: retryExecutor, log: log}, nil
 }
 
 func (r *PGMetricRepository) Close() error {
@@ -150,7 +153,12 @@ func (r *PGMetricRepository) AddMetricsBulk(metricsData []metrics.Metric) error 
 			return errtypes.MakeServerError(fmt.Errorf("failed to begin transaction: %w", err))
 		}
 
-		defer tx.Rollback()
+		defer func() {
+			errd := tx.Rollback()
+			if errd != nil {
+				r.log.Errorf("Failed to rollback tx: %v", errd)
+			}
+		}()
 
 		ctx, cancel := context.WithTimeout(context.Background(), r.dbConfig.PingTimeout)
 		defer cancel()
@@ -161,21 +169,31 @@ func (r *PGMetricRepository) AddMetricsBulk(metricsData []metrics.Metric) error 
 			return errtypes.MakeServerError(fmt.Errorf("failed to prepare query %v: %w", r.queryConfig.update, err))
 		}
 
-		defer stmt.Close()
+		defer func() {
+			errs := stmt.Close()
+			if errs != nil {
+				r.log.Errorf("Failed to close prepared statement: %v", errs)
+			}
+		}()
 
 		for i := range metricsData {
 			m := &metricsData[i]
-			val, err := m.GetData()
+			var val string
+			val, err = m.GetData()
 			if err != nil {
 				return errtypes.MakeBadDataError(fmt.Errorf("invalid data for metric '%v': %w", m.ID, err))
 			}
 
 			if m.MType == metrics.CounterMetricType {
-				updateVal, err := r.getCounterIncDelta(ctx, tx, m.ID, val)
+				var updateVal string
+				updateVal, err = r.getCounterIncDelta(ctx, tx, m.ID, val)
 				if err != nil {
 					return errtypes.MakeServerError(err)
 				}
-				m.SetData(updateVal)
+				err = m.SetData(updateVal)
+				if err != nil {
+					return errtypes.MakeServerError(err)
+				}
 			}
 
 			_, err = stmt.ExecContext(ctx, m.ID, m.Value, m.Delta, m.MType)
@@ -210,7 +228,6 @@ func (r *PGMetricRepository) AddOrUpdate(key string, val string, mtype string) (
 
 		updateVal := val
 		updateValOut = &updateVal
-		var err error
 		if mtype == metrics.CounterMetricType {
 			updateVal, err = r.getCounterIncDelta(ctx, r.db, key, val)
 			if err != nil {
@@ -218,7 +235,11 @@ func (r *PGMetricRepository) AddOrUpdate(key string, val string, mtype string) (
 			}
 		}
 
-		metric, _ := metrics.NewMetric(key, updateVal, mtype)
+		var metric metrics.Metric
+		metric, err = metrics.NewMetric(key, updateVal, mtype)
+		if err != nil {
+			return errtypes.MakeServerError(err)
+		}
 		_, err = r.db.ExecContext(ctx, r.queryConfig.update, metric.ID, metric.Value, metric.Delta, metric.MType)
 
 		if err != nil {
@@ -314,7 +335,12 @@ func (r *PGMetricRepository) GetAll() ([]metrics.Metric, error) {
 			return errtypes.MakeServerError(fmt.Errorf("failed to query all repo metrics: %w", err))
 		}
 
-		defer row.Close()
+		defer func() {
+			err = row.Close()
+			if err != nil {
+				r.log.Errorf("Failed to close row: %v", err)
+			}
+		}()
 
 		for row.Next() {
 			var name string
@@ -322,7 +348,7 @@ func (r *PGMetricRepository) GetAll() ([]metrics.Metric, error) {
 			var delta sql.NullString
 			var mtype string
 
-			err := row.Scan(&name, &delta, &value, &mtype)
+			err = row.Scan(&name, &delta, &value, &mtype)
 
 			if err != nil {
 				return errtypes.MakeServerError(fmt.Errorf("failed to get metric: %w", err))
@@ -335,7 +361,8 @@ func (r *PGMetricRepository) GetAll() ([]metrics.Metric, error) {
 				data = delta.String
 			}
 
-			m, err := metrics.NewMetric(name, data, mtype)
+			var m metrics.Metric
+			m, err = metrics.NewMetric(name, data, mtype)
 
 			if err != nil {
 				return errtypes.MakeServerError(fmt.Errorf("failed to create metric from value %v: %w", value, err))
@@ -396,5 +423,7 @@ func NewDefaultDBRetryExecutor(stopCtx context.Context) *common.CommonRetryExecu
 		pgx.ErrAcquireTimeout,
 		context.DeadlineExceeded,
 	}
-	return common.NewCommonRetryExecutor(stopCtx, 2*time.Second, 3, errs)
+	const interval = 2
+	const retries = 3
+	return common.NewCommonRetryExecutor(stopCtx, interval*time.Second, retries, errs)
 }
