@@ -90,7 +90,7 @@ func newWorker(config *config.Config, logger log.Logger, client monitorHttp.HTTP
 	return &w
 }
 
-func (w *worker) getCompressedBytes(data []byte) ([]byte, error) {
+func (w *worker) getCompressedBytes() ([]byte, error) {
 	if len(w.config.CompressAlgo) > 0 {
 		factory, err := compression.GetCompressorFactory(w.config.CompressAlgo)
 		if err != nil {
@@ -147,9 +147,18 @@ func (w *worker) reportDataJSON(data reportData) error {
 			return fmt.Errorf("failed to sign request data: %w", err)
 		}
 		sigHash = hash
+		w.buffs.data = *bytes.NewBuffer(bytesToSend)
 	}
 
-	compressedBytes, err := w.getCompressedBytes(bytesToSend)
+	if w.config.EncPublicKey != nil {
+		encData, err := encryption.EncryptRequestBody(&w.buffs.data, w.config.EncPublicKey)
+		if err != nil {
+			return fmt.Errorf("failed to encrypt report request data: %v", err)
+		}
+		bytesToSend = encData.Bytes()
+	}
+
+	compressedBytes, err := w.getCompressedBytes()
 	if err != nil {
 		w.log.Debugf("Unable to enable compression: %v", err)
 	} else {

@@ -2,13 +2,17 @@
 package config
 
 import (
+	"crypto/rsa"
 	"flag"
+	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"time"
 
 	"github.com/caarlos0/env"
 	"github.com/fuzzy-toozy/metrics-service/internal/config"
+	"github.com/fuzzy-toozy/metrics-service/internal/encryption"
 	"github.com/fuzzy-toozy/metrics-service/internal/log"
 )
 
@@ -22,8 +26,12 @@ type Config struct {
 	ServerAddress string
 	// StoreFilePath path to store metrics storage backup (in case no database used).
 	StoreFilePath string
+	// Assymetric encryption private key path
+	EncKeyPath string
 	// SecretKey key to validate signature of sent data.
 	SecretKey []byte
+	// Assymetric encryption private key
+	EncryptPrivKey *rsa.PrivateKey
 	// DatabaseConfig database configuration.
 	DatabaseConfig DBConfig
 	// StoreInterval interval between storage backups (in case no database used).
@@ -56,6 +64,25 @@ func (c *Config) Print(logger log.Logger) {
 	c.DatabaseConfig.Print(logger)
 }
 
+func parseEncKey(path string) (*rsa.PrivateKey, error) {
+	encKeyFile, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open private key file: %v", err)
+	}
+
+	encKeyData, err := io.ReadAll(encKeyFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read private key: %v", err)
+	}
+
+	key, err := encryption.ParseRSAPrivateKey(encKeyData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse private key: %v", err)
+	}
+
+	return key, nil
+}
+
 // BuildConfig parses command line parameters and environment variables
 // and builds configuration from parsed data.
 func BuildConfig() (*Config, error) {
@@ -77,6 +104,7 @@ func BuildConfig() (*Config, error) {
 		"Database connection string")
 	flag.StringVar(&c.ServerAddress, "a", "localhost:8080", "Address and port to bind server to")
 	flag.StringVar(&c.StoreFilePath, "f", "/tmp/metrics-db.json", "File to store metrics data to")
+	flag.StringVar(&c.EncKeyPath, "crypto-key", "", "Path to private RSA key in PEM format")
 	flag.BoolVar(&c.RestoreData, "r", true, "Restore data from previously stored values")
 
 	flag.Var(&readTimeout, "read_timeout", "Server read timeout(seconds)")
@@ -107,6 +135,13 @@ func BuildConfig() (*Config, error) {
 		c.DatabaseConfig.UseDatabase = true
 	}
 
+	if len(c.EncKeyPath) > 0 {
+		c.EncryptPrivKey, err = parseEncKey(c.EncKeyPath)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	return &c, nil
 }
 
@@ -120,6 +155,7 @@ func (c *Config) ParseEnvVariables() error {
 		Restore       string `env:"RESTORE"`
 		DBConnStr     string `env:"DATABASE_DSN"`
 		SecretKey     string `env:"KEY"`
+		EncKeyPath    string `env:"CRYPTO_KEY"`
 	}
 	ecfg := EnvConfig{}
 	err := env.Parse(&ecfg)

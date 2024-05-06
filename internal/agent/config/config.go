@@ -2,8 +2,10 @@
 package config
 
 import (
+	"crypto/rsa"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"strings"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/caarlos0/env"
 	"github.com/fuzzy-toozy/metrics-service/internal/config"
+	"github.com/fuzzy-toozy/metrics-service/internal/encryption"
 	"github.com/fuzzy-toozy/metrics-service/internal/log"
 )
 
@@ -28,6 +31,10 @@ type Config struct {
 	ReportBulkEndpoint string
 	// CompressAlgo name of compression algorithm to use (only gzip supported atm).
 	CompressAlgo string
+	// EncKeyPath assymetic encryption public key path.
+	EncKeyPath string
+	// EncKey assymetic encryption public key.
+	EncPublicKey *rsa.PublicKey
 	// SecretKey secret key for signing sent data.
 	SecretKey []byte
 	// PollInterval interval for agent metrics polling.
@@ -60,6 +67,25 @@ func (c *Config) Print(log log.Logger) {
 	log.Infof("Report interval: %v", c.ReportInterval)
 }
 
+func parseEncKey(path string) (*rsa.PublicKey, error) {
+	encKeyFile, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open public key file: %v", err)
+	}
+
+	encKeyData, err := io.ReadAll(encKeyFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read public key: %v", err)
+	}
+
+	key, err := encryption.ParseRSAPublicKey(encKeyData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse public key: %v", err)
+	}
+
+	return key, nil
+}
+
 // BuildConfig parses environment varialbes, command line parameters and builds agent's config.
 func BuildConfig() (*Config, error) {
 	c := Config{}
@@ -76,6 +102,7 @@ func BuildConfig() (*Config, error) {
 	var secretKey string
 
 	flag.StringVar(&secretKey, "k", "", "Secret key")
+	flag.StringVar(&c.EncKeyPath, "crypto-key", "", "Path to public RSA key in PEM format")
 	flag.StringVar(&c.ServerAddress, "a", "localhost:8080", "Server address")
 	flag.StringVar(&c.ReportURL, "u", "/update", "Server endpoint path")
 	flag.StringVar(&c.ReportBulkURL, "ub", "/updates", "Server endpoint path")
@@ -104,6 +131,13 @@ func BuildConfig() (*Config, error) {
 	c.ReportEndpoint = getEndpoint(c.ServerAddress, c.ReportURL)
 	c.ReportBulkEndpoint = getEndpoint(c.ServerAddress, c.ReportBulkURL)
 
+	if len(c.EncKeyPath) > 0 {
+		c.EncPublicKey, err = parseEncKey(c.EncKeyPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse public key: %v", err)
+		}
+	}
+
 	return &c, err
 }
 
@@ -111,6 +145,7 @@ func (c *Config) parseEnvVariables() error {
 	type EnvConfig struct {
 		ServerAddress  string `env:"ADDRESS"`
 		SecretKey      string `env:"KEY"`
+		EncKeyPath     string `env:"CRYPTO_KEY"`
 		ReportInterval int    `env:"REPORT_INTERVAL"`
 		PollInterval   int    `env:"POLL_INTERVAL"`
 		RateLimit      uint   `env:"RATE_LIMIT"`
@@ -127,6 +162,10 @@ func (c *Config) parseEnvVariables() error {
 
 	if len(ecfg.ServerAddress) > 0 {
 		c.ServerAddress = ecfg.ServerAddress
+	}
+
+	if len(ecfg.EncKeyPath) > 0 {
+		c.EncKeyPath = ecfg.EncKeyPath
 	}
 
 	if ecfg.PollInterval > 0 {

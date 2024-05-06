@@ -87,7 +87,12 @@ func NewServer(logger logging.Logger) (*Server, error) {
 		serverHandler = handlers.WithSignatureCheck(serverHandler, logger, config.SecretKey)
 	}
 
+	if s.config.EncryptPrivKey != nil {
+		serverHandler = handlers.WithDecryption(serverHandler, s.config.EncryptPrivKey, logger)
+	}
+
 	serverHandler = handlers.WithCompression(serverHandler, logger)
+
 	serverHandler = handlers.WithBodySizeLimit(serverHandler, config.MaxBodySize)
 	serverHandler = handlers.WithLogging(serverHandler, logger)
 
