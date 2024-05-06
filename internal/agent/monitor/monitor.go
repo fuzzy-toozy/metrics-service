@@ -1,3 +1,4 @@
+// Package monitor Defines monitors that fetch agent's metrics.
 package monitor
 
 import (
@@ -169,10 +170,12 @@ var metricsGatherCallbacks []func(*runtime.MemStats, storage.MetricsStorage) err
 		return s.AddOrUpdate(metrics.NewGaugeMetric(GCCPUFractionMetricName, float64(m.GCCPUFraction)))
 	},
 	func(m *runtime.MemStats, s storage.MetricsStorage) error {
-		return s.AddOrUpdate(metrics.NewGaugeMetric(RandomValueMetricName, float64(rand.Intn(999999))))
+		const randCap = 999999
+		return s.AddOrUpdate(metrics.NewGaugeMetric(RandomValueMetricName, float64(rand.Intn(randCap))))
 	},
 	func(m *runtime.MemStats, s storage.MetricsStorage) error {
-		return s.AddOrUpdate(metrics.NewCounterMetric(PollCountMetricName, 1))
+		const StartVal = 1
+		return s.AddOrUpdate(metrics.NewCounterMetric(PollCountMetricName, StartVal))
 	},
 }
 
@@ -245,7 +248,8 @@ func (m *PsMonitor) GatherMetrics() error {
 		return err
 	}
 
-	cpuLoad, err := cpu.Percent(100*time.Millisecond, true)
+	const usageInterval = 100
+	cpuLoad, err := cpu.Percent(usageInterval*time.Millisecond, true)
 
 	if err != nil {
 		return err

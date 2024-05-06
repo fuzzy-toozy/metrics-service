@@ -16,8 +16,8 @@ import (
 )
 
 type RespChecker struct {
-	expect metrics.Metric
 	t      *testing.T
+	expect metrics.Metric
 }
 
 func (r *RespChecker) Check(req *httptest.ResponseRecorder) {
@@ -55,10 +55,10 @@ func TestMetrics(t *testing.T) {
 	}
 
 	tests := []struct {
-		name        string
 		args        args
-		wantCode    int
 		respChecker *RespChecker
+		name        string
+		wantCode    int
 	}{
 		{name: "Invalid path",
 			args:     args{w: httptest.NewRecorder(), r: httptest.NewRequest(http.MethodPost, "/invalid", nil)},

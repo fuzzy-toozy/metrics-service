@@ -1,5 +1,6 @@
-// Provides middleware to handle compresion/decompression.
 package handlers
+
+// Provides middleware to handle compresion/decompression.
 
 import (
 	"fmt"

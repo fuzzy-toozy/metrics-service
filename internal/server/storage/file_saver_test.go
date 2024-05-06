@@ -2,6 +2,7 @@ package storage
 
 import (
 	"encoding/json"
+	"fmt"
 	"math/rand"
 	"os"
 	"strconv"
@@ -21,7 +22,12 @@ func getMetricsFromFile(fileName string) ([]metrics.Metric, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() {
+		errd := f.Close()
+		if errd != nil {
+			fmt.Printf("Failed to close file: %v\n", errd)
+		}
+	}()
 
 	err = json.NewDecoder(f).Decode(&m)
 	if err != nil {
@@ -34,7 +40,12 @@ func getMetricsFromFile(fileName string) ([]metrics.Metric, error) {
 func Test_FileSaver(t *testing.T) {
 	repo := NewCommonMetricsRepository()
 	outFile := "repoFile.out"
-	defer os.Remove(outFile)
+	defer func() {
+		err := os.Remove(outFile)
+		if err != nil {
+			fmt.Printf("Failed to remove file: %v\n", err)
+		}
+	}()
 	logger := log.NewDevZapLogger()
 	fs := NewFileSaver(repo, outFile, logger)
 
@@ -62,7 +73,12 @@ func Test_FileSaver(t *testing.T) {
 func Test_PeriodicFileSaver(t *testing.T) {
 	repo := NewCommonMetricsRepository()
 	outFile := "repoFile.out"
-	defer os.RemoveAll(outFile)
+	defer func() {
+		err := os.RemoveAll(outFile)
+		if err != nil {
+			fmt.Printf("Failed to remove file: %v\n", err)
+		}
+	}()
 	logger := log.NewDevZapLogger()
 
 	dur := time.Duration(1+rand.Int31()%500) * time.Millisecond

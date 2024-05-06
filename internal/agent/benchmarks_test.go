@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"runtime"
 	"testing"
 
 	"github.com/fuzzy-toozy/metrics-service/internal/agent/config"
@@ -40,7 +41,11 @@ func BenchmarkReportMetrics(b *testing.B) {
 
 	m := monitor.NewMetricsMonitor(storage.NewCommonMetricsStorage(), log.NewDevZapLogger())
 
-	m.GatherMetrics()
+	err = m.GatherMetrics()
+	if err != nil {
+		logger.Errorf("Failed to gather metrics: %v", err)
+		return
+	}
 
 	allMetrics := m.GetMetricsStorage().GetAllMetrics()
 
@@ -49,8 +54,9 @@ func BenchmarkReportMetrics(b *testing.B) {
 	rData.dType = tBULK
 
 	for i := 0; i < b.N; i++ {
-		w.reportDataJSON(rData)
+		err = w.reportDataJSON(rData)
 	}
+	runtime.KeepAlive(err)
 }
 
 func BenchmarkReportMetric(b *testing.B) {
@@ -71,6 +77,7 @@ func BenchmarkReportMetric(b *testing.B) {
 	rData.dType = tSINGLE
 
 	for i := 0; i < b.N; i++ {
-		w.reportDataJSON(rData)
+		err = w.reportDataJSON(rData)
 	}
+	runtime.KeepAlive(err)
 }

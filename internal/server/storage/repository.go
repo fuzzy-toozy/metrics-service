@@ -82,7 +82,8 @@ func (r *CommonMetricsRepository) AddOrUpdate(key string, val string, mtype stri
 
 	m, ok := r.storage[key]
 	if !ok {
-		m, err := metrics.NewMetric(key, val, mtype)
+		var err error
+		m, err = metrics.NewMetric(key, val, mtype)
 		if err != nil {
 			return "", errtypes.MakeBadDataError(err)
 		}
@@ -98,7 +99,11 @@ func (r *CommonMetricsRepository) AddOrUpdate(key string, val string, mtype stri
 
 	r.storage[key] = m
 
-	val, _ = m.GetData()
+	val, err = m.GetData()
+
+	if err != nil {
+		return "", err
+	}
 
 	return val, nil
 }
@@ -157,7 +162,9 @@ func (r *CommonMetricsRepository) Save(w io.Writer) error {
 
 func (r *CommonMetricsRepository) Load(reader io.Reader) error {
 	b := bytes.Buffer{}
-	io.Copy(&b, reader)
-
+	_, err := io.Copy(&b, reader)
+	if err != nil {
+		return err
+	}
 	return json.Unmarshal(b.Bytes(), &r)
 }

@@ -1,4 +1,7 @@
+// Package handlers Implements various handlers and middlewares for metrics server.
 package handlers
+
+// Server's routing setup
 
 import (
 	"fmt"

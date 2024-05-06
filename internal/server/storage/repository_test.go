@@ -74,7 +74,8 @@ func Test_MetricsRepo(t *testing.T) {
 		check[id] = valInt
 
 		valStr := strconv.FormatInt(valInt, 10)
-		v, err := repo.AddOrUpdate(id, valStr, metrics.CounterMetricType)
+		var v string
+		v, err = repo.AddOrUpdate(id, valStr, metrics.CounterMetricType)
 		require.NoError(t, err)
 		require.Equal(t, v, valStr)
 	}

@@ -1,4 +1,4 @@
-// General metric type. Used in agent and server.
+// Package metrics General metric type. Used in agent and server.
 // Currently supports 2 metric types: Gauge and Counter.
 // Gauge metric type supports only float64 values,
 // updates of gauge metric simply replace old value.
@@ -13,14 +13,14 @@ import (
 )
 
 type Metric struct {
-	// ID metric name
-	ID string `json:"id"`
-	// MType metric type (Gauge or Counter)
-	MType string `json:"type"`
 	// Delta metric value used for Counter metric type
 	Delta *int64 `json:"delta,omitempty"`
 	// Value metric value used for Gauge metric type
 	Value *float64 `json:"value,omitempty"`
+	// ID metric name
+	ID string `json:"id"`
+	// MType metric type (Gauge or Counter)
+	MType string `json:"type"`
 }
 
 const (

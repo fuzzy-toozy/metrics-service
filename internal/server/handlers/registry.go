@@ -1,5 +1,6 @@
-// Provides handlers to access metrics storage.
 package handlers
+
+// Provides handlers to access metrics storage.
 
 import (
 	"encoding/json"
@@ -34,25 +35,35 @@ func setJSONContent(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 }
 
-func respEmptyJSON(w http.ResponseWriter, status int) {
+func respEmptyJSON(w http.ResponseWriter, status int, log log.Logger) {
 	setJSONContent(w)
 	w.WriteHeader(status)
-	w.Write([]byte("{}"))
+	_, err := w.Write([]byte("{}"))
+	if err != nil {
+		log.Errorf("Failed to write response body: %v", err)
+	}
 }
 
-func respMetricJSON(m metrics.Metric, w http.ResponseWriter, status int) {
+func respMetricJSON(m metrics.Metric, w http.ResponseWriter, status int, log log.Logger) {
 	setJSONContent(w)
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(m)
+	err := json.NewEncoder(w).Encode(m)
+	if err != nil {
+		log.Errorf("Failed to write response JSON body: %v", err)
+	}
 }
 
-func respMetricsJSON(m []metrics.Metric, w http.ResponseWriter, status int) {
+func respMetricsJSON(m []metrics.Metric, w http.ResponseWriter, status int, log log.Logger) {
 	setJSONContent(w)
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(m)
+	err := json.NewEncoder(w).Encode(m)
+	if err != nil {
+		log.Errorf("Failed to write response JSON body: %v", err)
+	}
 }
 
-// @Summary Health Check
+// HealthCheck Pings the database to check its availability.
+// @Summary HealthCheck
 // @Description Pings the database to check its availability.
 // @Tags Health
 // @Produce plain
@@ -69,7 +80,10 @@ func (h *MetricRegistryHandler) HealthCheck(w http.ResponseWriter, r *http.Reque
 	}
 
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("OK"))
+	_, err = w.Write([]byte("OK"))
+	if err != nil {
+		h.log.Errorf("Failed to write resp body: %v", err)
+	}
 }
 
 func (h *MetricRegistryHandler) GetMetricURLInfo() MetricURLInfo {
@@ -93,7 +107,8 @@ func (h *MetricRegistryHandler) getMetric(name string, mtype string) (val string
 	return val, http.StatusOK, nil
 }
 
-// @Summary Get Metric
+// GetMetric Searches metric by id and type and returns it's value in plain text.
+// @Summary GetMetric
 // @Description searches metric by id and type and returns it's value in plain text.
 // @Tags Metrics
 // @ID get-metric
@@ -119,10 +134,14 @@ func (h *MetricRegistryHandler) GetMetric(w http.ResponseWriter, r *http.Request
 
 	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(status)
-	w.Write([]byte(val))
+	_, err = w.Write([]byte(val))
+	if err != nil {
+		h.log.Errorf("Failed to write response body: %v", err)
+	}
 }
 
-// @Summary Get Metric JSON
+// GetMetricJSON Gets requested metric by id and type and returns it's id, type and value in JSON format.
+// @Summary GetMetricJSON
 // @Description Gets requested metric by id and type and returns it's id, type and value in JSON format.
 // @Tags Metrics
 // @ID get-metric-json
@@ -172,7 +191,7 @@ func (h *MetricRegistryHandler) GetMetricJSON(w http.ResponseWriter, r *http.Req
 
 	if err := json.NewDecoder(r.Body).Decode(&receivedData); err != nil {
 		h.log.Debugf("Failed to decode JSON data: %v", err)
-		respEmptyJSON(w, http.StatusBadRequest)
+		respEmptyJSON(w, http.StatusBadRequest, h.log)
 		return
 	}
 
@@ -183,16 +202,23 @@ func (h *MetricRegistryHandler) GetMetricJSON(w http.ResponseWriter, r *http.Req
 	}
 
 	if status != http.StatusOK {
-		respEmptyJSON(w, status)
+		respEmptyJSON(w, status, h.log)
 		return
 	}
 
-	respData, _ := metrics.NewMetric(receivedData.ID, value, receivedData.MType)
+	respData, err := metrics.NewMetric(receivedData.ID, value, receivedData.MType)
 
-	respMetricJSON(respData, w, status)
+	if err != nil {
+		h.log.Errorf("Failed to create new metric: %v", err)
+		respEmptyJSON(w, http.StatusInternalServerError, h.log)
+		return
+	}
+
+	respMetricJSON(respData, w, status, h.log)
 }
 
-// @Summary Get All Metrics
+// GetAllMetrics Returns all stored metrics in an HTML table.
+// @Summary GetAllMetrics
 // @Description Returns all stored metrics in an HTML table.
 // @Tags Metrics
 // @ID get-all-metrics
@@ -218,7 +244,8 @@ func (h *MetricRegistryHandler) GetAllMetrics(w http.ResponseWriter, r *http.Req
 
 	metrics := make([]MetricInfo, 0, len(repoMetrics))
 	for _, m := range repoMetrics {
-		data, err := m.GetData()
+		var data string
+		data, err = m.GetData()
 		if err != nil {
 			h.log.Errorf("Failed to get all metrics: %v", err)
 			http.Error(w, "", http.StatusInternalServerError)
@@ -253,7 +280,8 @@ func (h *MetricRegistryHandler) GetAllMetrics(w http.ResponseWriter, r *http.Req
 </html>`
 
 	if h.allMetrics == nil {
-		tmpl, err := template.New("AllMetrics").Parse(pageTempl)
+		var tmpl *template.Template
+		tmpl, err = template.New("AllMetrics").Parse(pageTempl)
 
 		if err != nil {
 			h.log.Debugf("Parsing template failed: %v", err)
@@ -265,8 +293,15 @@ func (h *MetricRegistryHandler) GetAllMetrics(w http.ResponseWriter, r *http.Req
 	}
 
 	w.Header().Set("Content-Type", "text/html")
+	err = h.allMetrics.Execute(w, metrics)
+
+	if err != nil {
+		h.log.Errorf("Failed to execute tempalate: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
 	w.WriteHeader(http.StatusOK)
-	h.allMetrics.Execute(w, metrics)
 }
 
 func (h *MetricRegistryHandler) updateMetric(mtype, mname, mvalue string) (metricValue string, statusCode int, err error) {
@@ -287,7 +322,8 @@ func (h *MetricRegistryHandler) updateMetric(mtype, mname, mvalue string) (metri
 	return updatedVal, status, nil
 }
 
-// @Summary Update Metric
+// UpdateMetric Updates the specified metric with the provided value.
+// @Summary UpdateMetric
 // @Description Updates the specified metric with the provided value.
 // @Tags Metrics
 // @ID update-metric
@@ -313,7 +349,10 @@ func (h *MetricRegistryHandler) UpdateMetric(w http.ResponseWriter, r *http.Requ
 	}
 
 	w.WriteHeader(status)
-	w.Write([]byte(value))
+	_, err = w.Write([]byte(value))
+	if err != nil {
+		h.log.Errorf("Failed to write response body: %v", err)
+	}
 }
 
 // UpdateMetricsFromJSON updates or adds metrics received in request.
@@ -359,7 +398,7 @@ func (h *MetricRegistryHandler) UpdateMetricsFromJSON(w http.ResponseWriter, r *
 	receivedData := make([]metrics.Metric, 0)
 	if err := json.NewDecoder(r.Body).Decode(&receivedData); err != nil {
 		h.log.Debugf("Failed to decode JSON data: %v", err)
-		respEmptyJSON(w, http.StatusBadRequest)
+		respEmptyJSON(w, http.StatusBadRequest, h.log)
 		return
 	}
 
@@ -367,11 +406,11 @@ func (h *MetricRegistryHandler) UpdateMetricsFromJSON(w http.ResponseWriter, r *
 	status := errtypes.ErrorToStatus(err)
 	if err != nil {
 		h.log.Errorf("Failed to add metrics: %v", err)
-		respEmptyJSON(w, status)
+		respEmptyJSON(w, status, h.log)
 		return
 	}
 
-	respMetricsJSON(receivedData, w, status)
+	respMetricsJSON(receivedData, w, status, h.log)
 }
 
 // UpdateMetricFromJSON updates or adds metrics received in request.
@@ -426,14 +465,14 @@ func (h *MetricRegistryHandler) UpdateMetricFromJSON(w http.ResponseWriter, r *h
 
 	if err := json.NewDecoder(r.Body).Decode(&receivedData); err != nil {
 		h.log.Debugf("Failed to decode JSON data: %v", err)
-		respEmptyJSON(w, http.StatusBadRequest)
+		respEmptyJSON(w, http.StatusBadRequest, h.log)
 		return
 	}
 
 	value, err := receivedData.GetData()
 	if err != nil {
 		h.log.Debugf("Failed to get metric data: %v", err)
-		respEmptyJSON(w, http.StatusBadRequest)
+		respEmptyJSON(w, http.StatusBadRequest, h.log)
 		return
 	}
 
@@ -441,12 +480,18 @@ func (h *MetricRegistryHandler) UpdateMetricFromJSON(w http.ResponseWriter, r *h
 
 	if err != nil {
 		h.log.Debugf("Failed to update metric: %v", err)
-		respEmptyJSON(w, status)
+		respEmptyJSON(w, status, h.log)
 		return
 	}
 
-	respData, _ := metrics.NewMetric(receivedData.ID, value, receivedData.MType)
-	respMetricJSON(respData, w, status)
+	respData, err := metrics.NewMetric(receivedData.ID, value, receivedData.MType)
+	if err != nil {
+		h.log.Errorf("Failed to create response data metric: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	respMetricJSON(respData, w, status, h.log)
 }
 
 func NewMetricRegistryHandler(registry storage.Repository, logger log.Logger, minfo MetricURLInfo,

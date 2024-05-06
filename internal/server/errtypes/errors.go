@@ -1,3 +1,4 @@
+// Package errtypes Error types to return from services methods
 package errtypes
 
 import (

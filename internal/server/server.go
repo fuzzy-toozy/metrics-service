@@ -1,3 +1,5 @@
+// Package server Metrics serving and storing server.
+// Stores and serves metrics sent by agent.
 package server
 
 import (
@@ -41,7 +43,7 @@ func NewServer(logger logging.Logger) (*Server, error) {
 	s.config = config
 
 	if config.DatabaseConfig.UseDatabase {
-		s.metricsStorage, err = storage.NewPGMetricRepository(config.DatabaseConfig, storage.NewDefaultDBRetryExecutor(s.stopCtx))
+		s.metricsStorage, err = storage.NewPGMetricRepository(config.DatabaseConfig, storage.NewDefaultDBRetryExecutor(s.stopCtx), s.logger)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create metrics storage: %w", err)
 		}
@@ -55,7 +57,8 @@ func NewServer(logger logging.Logger) (*Server, error) {
 	}
 
 	if config.RestoreData && !config.DatabaseConfig.UseDatabase {
-		f, err := os.OpenFile(config.StoreFilePath, os.O_RDONLY, 0444)
+		const perms = 0444
+		f, err := os.OpenFile(config.StoreFilePath, os.O_RDONLY, perms)
 		if err == nil {
 			err = s.metricsStorage.Load(f)
 		}
@@ -103,14 +106,14 @@ func (s *Server) Run() error {
 	stop := func() error {
 		err := s.httpServer.Shutdown(context.Background())
 		if err != nil {
-			err = fmt.Errorf("server shutdown failed: %w", err)
+			s.logger.Errorf("server shutdown failed: %w", err)
 		}
 
 		if s.asyncStorageSaver != nil {
 			s.asyncStorageSaver.Stop()
 		}
 
-		if err := s.metricsStorage.Close(); err != nil {
+		if err = s.metricsStorage.Close(); err != nil {
 			s.logger.Errorf("Failed to close metrics storage: %v", err)
 		}
 

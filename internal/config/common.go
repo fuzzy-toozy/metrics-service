@@ -1,4 +1,4 @@
-// Duration option for use in configuration.
+// Package config Duration option for use in configuration.
 package config
 
 import (

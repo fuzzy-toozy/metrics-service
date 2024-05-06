@@ -1,4 +1,4 @@
-// Response writer proxy to log response information
+// Package log Response writer proxy to log response information
 package log
 
 import "net/http"

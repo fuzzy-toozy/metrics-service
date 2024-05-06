@@ -13,26 +13,31 @@ type StorageSaver interface {
 }
 
 type PeriodicSaver struct {
+	ticker       *time.Ticker
+	done         chan struct{}
+	storageSaver StorageSaver
+	log          logging.Logger
 	period       time.Duration
 	wg           sync.WaitGroup
-	done         chan struct{}
-	log          logging.Logger
-	storageSaver StorageSaver
-	ticker       *time.Ticker
 }
 
 type FileSaver struct {
+	metricsStorage Repository
 	logger         logging.Logger
 	fileName       string
-	metricsStorage Repository
 }
 
 func (s *FileSaver) Save() error {
-	f, err := os.OpenFile(s.fileName, os.O_CREATE|os.O_WRONLY, 0644)
+	const perms = 0644
+	f, err := os.OpenFile(s.fileName, os.O_CREATE|os.O_WRONLY, perms)
 	defer func() {
 		if f != nil {
-			f.Sync()
-			err := f.Close()
+			err = f.Sync()
+			if err != nil {
+				s.logger.Errorf("Failed to sync storage file")
+			}
+
+			err = f.Close()
 			if err != nil {
 				s.logger.Errorf("Failed to close storage file")
 			}

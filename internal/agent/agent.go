@@ -1,4 +1,4 @@
-// Metrics gathering agent.
+// Package agent Metrics gathering agent.
 // Gathers various memory and CPU metrics from local machine
 // and sends them to speficied server.
 package agent
@@ -50,10 +50,10 @@ type buffers struct {
 }
 
 type worker struct {
-	buffs      buffers
-	httpClient monitorHttp.HTTPClient
 	log        log.Logger
+	httpClient monitorHttp.HTTPClient
 	config     *config.Config
+	buffs      buffers
 }
 
 type dataType int
@@ -64,8 +64,8 @@ const (
 )
 
 type reportData struct {
-	dType dataType
 	data  json.Marshaler
+	dType dataType
 }
 
 func NewAgent(config config.Config, logger log.Logger, opts ...configOption) (*Agent, error) {
@@ -173,11 +173,14 @@ func (w *worker) reportDataJSON(data reportData) error {
 
 	if resp != nil {
 		defer func() {
-			_, err := io.Copy(io.Discard, resp.Body)
+			_, err = io.Copy(io.Discard, resp.Body)
 			if err != nil {
 				w.log.Debugf("Failed reading request body: %v", err)
 			}
-			resp.Body.Close()
+			err = resp.Body.Close()
+			if err != nil {
+				w.log.Debugf("Failed to close resp body: %v", err)
+			}
 		}()
 
 		if resp.StatusCode != http.StatusOK {
@@ -258,7 +261,9 @@ func (a *Agent) Run() {
 		}()
 	}
 
-	retryExecutor := common.NewCommonRetryExecutor(ctx, 2*time.Second, 3, nil)
+	const defaultRetryTimeout = 2
+	const defaultRetriesCount = 3
+	retryExecutor := common.NewCommonRetryExecutor(ctx, defaultRetryTimeout*time.Second, defaultRetriesCount, nil)
 	wg.Add(int(a.config.RateLimit))
 	for i := 0; i < int(a.config.RateLimit); i++ {
 		i := i
