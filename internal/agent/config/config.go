@@ -20,29 +20,29 @@ import (
 // Config structure containing various agent service configuration.
 type Config struct {
 	// ServerAddress address of the metrics server to send metrics to.
-	ServerAddress string
+	ServerAddress string `json:"address"`
 	// ReportURL server url to send data to (for single metric).
-	ReportURL string
+	ReportURL string `json:"report_url"`
 	// ReportBulkURL server url to send data to (for several metrics).
-	ReportBulkURL string
+	ReportBulkURL string `json:"report_bulk_url"`
 	// ReportEndpoint server full endpoint url to send data to including schema (for single metric).
-	ReportEndpoint string
+	ReportEndpoint string `json:"-"`
 	// ReportBulkEndpoint server full endpoint url to send data to including schema (for several metrics).
-	ReportBulkEndpoint string
+	ReportBulkEndpoint string `json:"-"`
 	// CompressAlgo name of compression algorithm to use (only gzip supported atm).
-	CompressAlgo string
+	CompressAlgo string `json:"compression_algo"`
 	// EncKeyPath assymetic encryption public key path.
-	EncKeyPath string
+	EncKeyPath string `json:"crypto_key"`
 	// EncKey assymetic encryption public key.
-	EncPublicKey *rsa.PublicKey
+	EncPublicKey *rsa.PublicKey `json:"-"`
 	// SecretKey secret key for signing sent data.
-	SecretKey []byte
+	SecretKey []byte `json:"signature_key"`
 	// PollInterval interval for agent metrics polling.
-	PollInterval time.Duration
+	PollInterval config.DurationOption `json:"poll_interval"`
 	// ReportInterval interval for reporting metrics to server.
-	ReportInterval time.Duration
+	ReportInterval config.DurationOption `json:"report_interval"`
 	// RateLimit max amount of concurrent connections to server.
-	RateLimit uint
+	RateLimit uint `json:"concurrent_connections"`
 }
 
 func getEndpoint(address, url string) string {
@@ -63,8 +63,8 @@ func (c *Config) Print(log log.Logger) {
 	log.Infof("Report bulk endpoint: %v", c.ReportBulkEndpoint)
 	log.Infof("Compression algorithm: %v", c.CompressAlgo)
 	log.Infof("Rate limit: %v", c.RateLimit)
-	log.Infof("Poll interval: %v", c.PollInterval)
-	log.Infof("Report interval: %v", c.ReportInterval)
+	log.Infof("Poll interval: %v", c.PollInterval.D)
+	log.Infof("Report interval: %v", c.ReportInterval.D)
 }
 
 func parseEncKey(path string) (*rsa.PublicKey, error) {
@@ -86,37 +86,121 @@ func parseEncKey(path string) (*rsa.PublicKey, error) {
 	return key, nil
 }
 
-// BuildConfig parses environment varialbes, command line parameters and builds agent's config.
-func BuildConfig() (*Config, error) {
-	c := Config{}
+func (c *Config) parseConfigFile(path string) error {
+	return config.ParseConfigFile(path, c)
+}
 
+func (c *Config) setDefaultValues() {
 	const defaultConcurentConnections = 20
 	const defaultPollIntervalSec = 2
 	const defaultReportIntervalSec = 10
+	const defaultReportURL = "/update"
+	const defaultReportBulkURL = "/updates"
+	const defaultServerAddress = "localhost:8080"
+	const defaultCompressAlgo = "gzip"
 
-	pollInterval := config.DurationOption{D: defaultPollIntervalSec * time.Second}
-	reportInterval := config.DurationOption{D: defaultReportIntervalSec * time.Second}
+	if c.RateLimit == 0 {
+		c.RateLimit = defaultConcurentConnections
+	}
+
+	if c.PollInterval.D == 0 {
+		c.PollInterval.D = defaultPollIntervalSec * time.Second
+	}
+
+	if c.ReportInterval.D == 0 {
+		c.ReportInterval.D = defaultReportIntervalSec * time.Second
+	}
+
+	if len(c.ReportURL) == 0 {
+		c.ReportURL = defaultReportURL
+	}
+
+	if len(c.ReportBulkURL) == 0 {
+		c.ReportBulkURL = defaultReportBulkURL
+	}
+
+	if len(c.ServerAddress) == 0 {
+		c.ServerAddress = defaultServerAddress
+	}
+
+	if len(c.CompressAlgo) == 0 {
+		c.CompressAlgo = defaultCompressAlgo
+	}
+}
+
+// BuildConfig parses environment varialbes, command line parameters and builds agent's config.
+func BuildConfig() (*Config, error) {
+	var (
+		secretKey      string
+		encKeyPath     string
+		serverAddress  string
+		reportURL      string
+		reportBulkURL  string
+		configFilePath string
+		rateLimit      uint
+		pollInterval   config.DurationOption
+		reportInterval config.DurationOption
+	)
+
+	var c Config
+	c.setDefaultValues()
+
 	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
-	c.CompressAlgo = "gzip"
-
-	var secretKey string
-
 	flag.StringVar(&secretKey, "k", "", "Secret key")
-	flag.StringVar(&c.EncKeyPath, "crypto-key", "", "Path to public RSA key in PEM format")
-	flag.StringVar(&c.ServerAddress, "a", "localhost:8080", "Server address")
-	flag.StringVar(&c.ReportURL, "u", "/update", "Server endpoint path")
-	flag.StringVar(&c.ReportBulkURL, "ub", "/updates", "Server endpoint path")
-	flag.UintVar(&c.RateLimit, "l", defaultConcurentConnections, "Max concurent connections")
+	flag.StringVar(&encKeyPath, "crypto-key", "", "Path to public RSA key in PEM format")
+	flag.StringVar(&serverAddress, "a", "", "Server address")
+	flag.StringVar(&reportURL, "u", "", "Server endpoint path")
+	flag.StringVar(&configFilePath, "c", "", "Config file path")
+	flag.StringVar(&configFilePath, "config", "", "Config file path")
 
-	flag.Var(&pollInterval, "p", "Metrics polling interval(seconds)")
-	flag.Var(&reportInterval, "r", "Metrics report interval(seconds)")
+	flag.StringVar(&reportBulkURL, "ub", "", "Server endpoint path")
+	flag.UintVar(&rateLimit, "l", 0, "Max concurent connections")
 
-	c.PollInterval = pollInterval.D
-	c.ReportInterval = reportInterval.D
+	flag.Var(&pollInterval, "p", "Metrics polling interval")
+	flag.Var(&reportInterval, "r", "Metrics report interval")
 
 	err := flag.CommandLine.Parse(os.Args[1:])
 	if err != nil {
 		return nil, err
+	}
+
+	if len(configFilePath) != 0 {
+		err = c.parseConfigFile(configFilePath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse config file: %w", err)
+		}
+	}
+
+	if len(secretKey) > 0 {
+		c.SecretKey = []byte(secretKey)
+	}
+
+	if len(encKeyPath) > 0 {
+		c.EncKeyPath = encKeyPath
+	}
+
+	if len(serverAddress) > 0 {
+		c.ServerAddress = serverAddress
+	}
+
+	if len(reportURL) > 0 {
+		c.ReportURL = reportURL
+	}
+
+	if len(reportBulkURL) > 0 {
+		c.ReportBulkURL = reportBulkURL
+	}
+
+	if rateLimit > 0 {
+		c.RateLimit = rateLimit
+	}
+
+	if pollInterval.D > 0 {
+		c.PollInterval = pollInterval
+	}
+
+	if reportInterval.D > 0 {
+		c.ReportInterval = reportInterval
 	}
 
 	if len(secretKey) != 0 {
@@ -169,11 +253,11 @@ func (c *Config) parseEnvVariables() error {
 	}
 
 	if ecfg.PollInterval > 0 {
-		c.PollInterval = time.Duration(ecfg.PollInterval) * time.Second
+		c.PollInterval.D = time.Duration(ecfg.PollInterval) * time.Second
 	}
 
 	if ecfg.ReportInterval > 0 {
-		c.ReportInterval = time.Duration(ecfg.ReportInterval) * time.Second
+		c.ReportInterval.D = time.Duration(ecfg.ReportInterval) * time.Second
 	}
 
 	if ecfg.RateLimit > 0 {

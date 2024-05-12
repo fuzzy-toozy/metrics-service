@@ -252,10 +252,10 @@ func (a *Agent) Run() {
 		currentMonitor := mon
 		go func() {
 			defer wg.Done()
-			reportTicker := time.NewTicker(a.config.ReportInterval)
+			reportTicker := time.NewTicker(a.config.ReportInterval.D)
 			for {
 				select {
-				case <-time.After(a.config.PollInterval):
+				case <-time.After(a.config.PollInterval.D):
 					err := currentMonitor.GatherMetrics()
 					if err != nil {
 						a.log.Warnf("Failed to gather app metrics. %v", err)
