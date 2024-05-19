@@ -173,6 +173,7 @@ func (w *worker) reportDataJSON(data reportData) error {
 
 	req.Header.Set("Content-Type", contentType)
 	req.Header.Set("Content-Encoding", contentEncoding)
+	req.Header.Set("X-Real-IP", w.config.HostIPAddr)
 
 	if len(sigHash) != 0 {
 		req.Header.Set("HashSHA256", sigHash)
