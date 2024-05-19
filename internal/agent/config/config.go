@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path"
 	"strings"
@@ -33,6 +34,8 @@ type Config struct {
 	CompressAlgo string `json:"compression_algo"`
 	// EncKeyPath assymetic encryption public key path.
 	EncKeyPath string `json:"crypto_key"`
+	// HostIPAddr ip address of current host
+	HostIPAddr string `json:"-"`
 	// EncKey assymetic encryption public key.
 	EncPublicKey *rsa.PublicKey `json:"-"`
 	// SecretKey secret key for signing sent data.
@@ -218,9 +221,16 @@ func BuildConfig() (*Config, error) {
 	if len(c.EncKeyPath) > 0 {
 		c.EncPublicKey, err = parseEncKey(c.EncKeyPath)
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse public key: %v", err)
+			return nil, fmt.Errorf("failed to parse public key: %w", err)
 		}
 	}
+
+	addr, err := getOutboundIP(c.ServerAddress)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get host ip address: %w", err)
+	}
+
+	c.HostIPAddr = addr.String()
 
 	return &c, err
 }
@@ -265,4 +275,21 @@ func (c *Config) parseEnvVariables() error {
 	}
 
 	return nil
+}
+
+func getOutboundIP(serverAddr string) (net.IP, error) {
+	conn, err := net.Dial("udp", serverAddr)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		err = conn.Close()
+		if err != nil {
+			fmt.Printf("Failed to close connection: %v\n", err)
+		}
+	}()
+
+	localAddr := conn.LocalAddr().(*net.UDPAddr)
+
+	return localAddr.IP, nil
 }

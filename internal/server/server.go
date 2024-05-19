@@ -94,6 +94,7 @@ func NewServer(logger logging.Logger) (*Server, error) {
 	serverHandler = handlers.WithCompression(serverHandler, logger)
 
 	serverHandler = handlers.WithBodySizeLimit(serverHandler, config.MaxBodySize)
+	serverHandler = handlers.WithSubnetFilter(serverHandler, logger, s.config.TrustedSubnetAddr)
 	serverHandler = handlers.WithLogging(serverHandler, logger)
 
 	s.httpServer = NewDefaultHTTPServer(*config, logger, serverHandler)
