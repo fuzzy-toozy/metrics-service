@@ -71,8 +71,8 @@ func NewServer(logger logging.Logger) (*Server, error) {
 
 	if len(config.StoreFilePath) > 0 && !config.DatabaseConfig.UseDatabase {
 		fileSaver := storage.NewFileSaver(s.metricsStorage, config.StoreFilePath, logger)
-		if config.StoreInterval > 0 {
-			s.asyncStorageSaver = storage.NewPeriodicSaver(config.StoreInterval, logger, fileSaver)
+		if config.StoreInterval.D > 0 {
+			s.asyncStorageSaver = storage.NewPeriodicSaver(config.StoreInterval.D, logger, fileSaver)
 			s.asyncStorageSaver.Run()
 			logger.Infof("Async persistent storage saver is started")
 		} else {
@@ -154,9 +154,9 @@ func NewDefaultHTTPServer(config config.Config, logger logging.Logger, handler h
 
 	s := http.Server{
 		Addr:         config.ServerAddress,
-		ReadTimeout:  config.ReadTimeout,
-		WriteTimeout: config.WriteTimeout,
-		IdleTimeout:  config.IdleTimeout,
+		ReadTimeout:  config.ReadTimeout.D,
+		WriteTimeout: config.WriteTimeout.D,
+		IdleTimeout:  config.IdleTimeout.D,
 		Handler:      handler,
 	}
 
