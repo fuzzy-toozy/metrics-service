@@ -9,11 +9,6 @@ import (
 
 func WithSubnetFilter(h http.Handler, log logging.Logger, subnet *net.IPNet) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if subnet == nil {
-			h.ServeHTTP(w, r)
-			return
-		}
-
 		realIP := r.Header.Get("X-Real-IP")
 
 		parsedIP := net.ParseIP(realIP)

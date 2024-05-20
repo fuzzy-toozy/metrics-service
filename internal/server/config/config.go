@@ -25,7 +25,8 @@ type Config struct {
 	// Assymetric encryption private key path
 	EncKeyPath string `json:"crypto_key"`
 	// DbConnString database connection string.
-	DBConnString  string `json:"database_dsn"`
+	DBConnString string `json:"database_dsn"`
+	// TrustedSubnet Subnet in CIDR format to accept requests from
 	TrustedSubnet string `json:"trusted_subnet"`
 	// TrustedSubnetAddr Parsed subnet to accept requests from
 	TrustedSubnetAddr *net.IPNet `json:"-"`
@@ -47,7 +48,6 @@ type Config struct {
 	WriteTimeout config.DurationOption `json:"write_timeout"`
 	// IdleTimeout maximum duration for which the server should keep an idle connection open before closing it.
 	IdleTimeout config.DurationOption `json:"idle_timeout"`
-	// TrustedSubnet Subnet in CIDR format to accept requests from
 }
 
 // Print writes server configuration to log.
