@@ -4,6 +4,7 @@ package config
 import (
 	"encoding/json"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -16,6 +17,12 @@ func (o *DurationOption) String() string {
 }
 
 func (o *DurationOption) Set(flagValue string) error {
+	intDuration, err := strconv.ParseUint(flagValue, 10, 64)
+	if err == nil {
+		o.D = time.Duration(intDuration) * time.Second
+		return nil
+	}
+
 	d, err := time.ParseDuration(flagValue)
 	if err != nil {
 		return err
@@ -32,6 +39,12 @@ func (o *DurationOption) UnmarshalJSON(data []byte) error {
 	var durationString string
 	if err := json.Unmarshal(data, &durationString); err != nil {
 		return err
+	}
+
+	intDuration, err := strconv.ParseUint(durationString, 10, 64)
+	if err == nil {
+		o.D = time.Duration(intDuration) * time.Second
+		return nil
 	}
 
 	duration, err := time.ParseDuration(durationString)
