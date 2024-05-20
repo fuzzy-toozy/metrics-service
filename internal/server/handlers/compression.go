@@ -69,6 +69,9 @@ func needToDecompress(r *http.Request) bool {
 func setupDecompression(r *http.Request) error {
 	var decompressor io.ReadCloser
 	contentEncoding := r.Header.Get("Content-Encoding")
+	if len(contentEncoding) == 0 {
+		return nil
+	}
 	factory, err := compression.GetDeompressorFactory(contentEncoding)
 	if err != nil {
 		return fmt.Errorf("failed to get compression factory for encoding %v: %w", contentEncoding, err)
