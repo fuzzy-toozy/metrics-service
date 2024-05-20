@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"strconv"
 	"time"
@@ -25,6 +26,10 @@ type Config struct {
 	EncKeyPath string `json:"crypto_key"`
 	// DbConnString database connection string.
 	DBConnString string `json:"database_dsn"`
+	// TrustedSubnet Subnet in CIDR format to accept requests from
+	TrustedSubnet string `json:"trusted_subnet"`
+	// TrustedSubnetAddr Parsed subnet to accept requests from
+	TrustedSubnetAddr *net.IPNet `json:"-"`
 	// SecretKey key to validate signature of sent data.
 	SecretKey []byte `json:"signature_key"`
 	// Assymetric encryption private key
@@ -163,6 +168,7 @@ func BuildConfig() (*Config, error) {
 	flag.Uint64Var(&maxBodySize, "bs", 0, "Max HTTP body size")
 	flag.StringVar(&configFilePath, "c", "", "Config file path")
 	flag.StringVar(&configFilePath, "config", "", "Config file path")
+	flag.StringVar(&c.TrustedSubnet, "t", "", "Subnet to accept requests from")
 
 	flag.Var(&pingTimeout, "ping_timeout", "DB ping timeout and retry timeout")
 	flag.Var(&readTimeout, "read_timeout", "Server read timeout(seconds)")
@@ -242,6 +248,12 @@ func BuildConfig() (*Config, error) {
 			return nil, err
 		}
 	}
+	if len(c.TrustedSubnet) > 0 {
+		_, c.TrustedSubnetAddr, err = net.ParseCIDR(c.TrustedSubnet)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	return &c, nil
 }
@@ -257,6 +269,7 @@ func (c *Config) ParseEnvVariables() error {
 		DBConnStr     string `env:"DATABASE_DSN"`
 		SecretKey     string `env:"KEY"`
 		EncKeyPath    string `env:"CRYPTO_KEY"`
+		TrustedSubnet string `env:"TRUSTED_SUBNET"`
 	}
 	ecfg := EnvConfig{}
 	err := env.Parse(&ecfg)
@@ -294,6 +307,10 @@ func (c *Config) ParseEnvVariables() error {
 
 	if len(ecfg.SecretKey) > 0 {
 		c.SecretKey = []byte(ecfg.SecretKey)
+	}
+
+	if len(ecfg.TrustedSubnet) > 0 {
+		c.TrustedSubnet = ecfg.TrustedSubnet
 	}
 
 	return nil

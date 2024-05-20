@@ -88,12 +88,17 @@ func NewServer(logger logging.Logger) (*Server, error) {
 	}
 
 	if s.config.EncryptPrivKey != nil {
-		serverHandler = handlers.WithDecryption(serverHandler, s.config.EncryptPrivKey, logger)
+		serverHandler = handlers.WithDecryption(serverHandler, logger, s.config.EncryptPrivKey)
 	}
 
 	serverHandler = handlers.WithCompression(serverHandler, logger)
 
 	serverHandler = handlers.WithBodySizeLimit(serverHandler, config.MaxBodySize)
+
+	if s.config.TrustedSubnetAddr != nil {
+		serverHandler = handlers.WithSubnetFilter(serverHandler, logger, s.config.TrustedSubnetAddr)
+	}
+
 	serverHandler = handlers.WithLogging(serverHandler, logger)
 
 	s.httpServer = NewDefaultHTTPServer(*config, logger, serverHandler)
