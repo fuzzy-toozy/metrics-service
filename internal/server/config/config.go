@@ -9,9 +9,11 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/caarlos0/env"
+	"github.com/fuzzy-toozy/metrics-service/internal/common"
 	"github.com/fuzzy-toozy/metrics-service/internal/config"
 	"github.com/fuzzy-toozy/metrics-service/internal/encryption"
 	"github.com/fuzzy-toozy/metrics-service/internal/log"
@@ -28,6 +30,8 @@ type Config struct {
 	DBConnString string `json:"database_dsn"`
 	// TrustedSubnet Subnet in CIDR format to accept requests from
 	TrustedSubnet string `json:"trusted_subnet"`
+	// WorkNode server working mode HTTP/GRPC
+	WorkMode string
 	// TrustedSubnetAddr Parsed subnet to accept requests from
 	TrustedSubnetAddr *net.IPNet `json:"-"`
 	// SecretKey key to validate signature of sent data.
@@ -135,6 +139,10 @@ func (c *Config) setDefaultValues() {
 	if c.IdleTimeout.D == 0 {
 		c.IdleTimeout.D = defaultCommonTimeout * time.Second
 	}
+
+	if len(c.WorkMode) == 0 {
+		c.WorkMode = common.ModeHTTP
+	}
 }
 
 // BuildConfig parses command line parameters and environment variables
@@ -147,6 +155,7 @@ func BuildConfig() (*Config, error) {
 		serverAddress  string
 		storeFilePath  string
 		configFilePath string
+		workMode       string
 		maxBodySize    uint64
 		pingTimeout    config.DurationOption
 		readTimeout    config.DurationOption
@@ -169,6 +178,7 @@ func BuildConfig() (*Config, error) {
 	flag.StringVar(&configFilePath, "c", "", "Config file path")
 	flag.StringVar(&configFilePath, "config", "", "Config file path")
 	flag.StringVar(&c.TrustedSubnet, "t", "", "Subnet to accept requests from")
+	flag.StringVar(&workMode, "wm", "", "Server work mode HTTP/GRPC")
 
 	flag.Var(&pingTimeout, "ping_timeout", "DB ping timeout and retry timeout")
 	flag.Var(&readTimeout, "read_timeout", "Server read timeout(seconds)")
@@ -233,9 +243,18 @@ func BuildConfig() (*Config, error) {
 		c.StoreInterval = storeInterval
 	}
 
+	if len(workMode) > 0 {
+		c.WorkMode = workMode
+	}
+
 	err = c.ParseEnvVariables()
 	if err != nil {
 		return nil, err
+	}
+
+	c.WorkMode = strings.ToLower(c.WorkMode)
+	if c.WorkMode != common.ModeGRPC && c.WorkMode != common.ModeHTTP {
+		return nil, fmt.Errorf("unsuported work mode: %v. Work modes available: %v, %v", c.WorkMode, common.ModeGRPC, common.ModeHTTP)
 	}
 
 	if len(c.DatabaseConfig.ConnString) > 0 {

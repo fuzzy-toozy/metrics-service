@@ -4,12 +4,8 @@
 package agent
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"os/signal"
 	"sync"
@@ -20,9 +16,8 @@ import (
 	monitorHttp "github.com/fuzzy-toozy/metrics-service/internal/agent/http"
 	"github.com/fuzzy-toozy/metrics-service/internal/agent/monitor"
 	"github.com/fuzzy-toozy/metrics-service/internal/agent/monitor/storage"
+	"github.com/fuzzy-toozy/metrics-service/internal/agent/worker"
 	"github.com/fuzzy-toozy/metrics-service/internal/common"
-	"github.com/fuzzy-toozy/metrics-service/internal/compression"
-	"github.com/fuzzy-toozy/metrics-service/internal/encryption"
 	"github.com/fuzzy-toozy/metrics-service/internal/log"
 )
 
@@ -44,30 +39,6 @@ func WithCommonMonitor(a *Agent) {
 	a.monitors = append(a.monitors, monitor.NewMetricsMonitor(storage.NewCommonMetricsStorage(), a.log))
 }
 
-type buffers struct {
-	compression bytes.Buffer
-	data        bytes.Buffer
-}
-
-type worker struct {
-	log        log.Logger
-	httpClient monitorHttp.HTTPClient
-	config     *config.Config
-	buffs      buffers
-}
-
-type dataType int
-
-const (
-	tBULK dataType = iota
-	tSINGLE
-)
-
-type reportData struct {
-	data  json.Marshaler
-	dType dataType
-}
-
 func NewAgent(config config.Config, logger log.Logger, opts ...configOption) (*Agent, error) {
 	a := Agent{config: config,
 		log: logger}
@@ -83,134 +54,17 @@ func NewAgent(config config.Config, logger log.Logger, opts ...configOption) (*A
 	return &a, nil
 }
 
-func newWorker(config *config.Config, logger log.Logger, client monitorHttp.HTTPClient) *worker {
-	w := worker{httpClient: client, log: logger, config: config}
-	b := buffers{data: bytes.Buffer{}, compression: bytes.Buffer{}}
-	w.buffs = b
-	return &w
-}
-
-func (w *worker) getCompressedBytes() ([]byte, error) {
-	if len(w.config.CompressAlgo) > 0 {
-		factory, err := compression.GetCompressorFactory(w.config.CompressAlgo)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get compression factory: %w", err)
-		}
-		w.buffs.compression.Reset()
-		compressor, err := factory(&w.buffs.compression)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create compressor: %w", err)
-		}
-
-		_, err = compressor.Write(w.buffs.data.Bytes())
-
-		if err != nil {
-			return nil, fmt.Errorf("failed to compress data: %w", err)
-		}
-
-		err = compressor.Close()
-
-		if err != nil {
-			return nil, fmt.Errorf("failed to finalize compressor: %w", err)
-		}
-
-		return w.buffs.compression.Bytes(), nil
-	}
-
-	return nil, fmt.Errorf("no compression algo specified")
-}
-
-func (w *worker) reportDataJSON(data reportData) error {
-	var reportURL string
-	if data.dType == tBULK {
-		reportURL = w.config.ReportBulkEndpoint
-	} else if data.dType == tSINGLE {
-		reportURL = w.config.ReportEndpoint
-	} else {
-		return fmt.Errorf("wrong report data type %v", data.dType)
-	}
-
-	contentType := "application/json"
-	contentEncoding := ""
-
-	w.buffs.data.Reset()
-	if err := json.NewEncoder(&w.buffs.data).Encode(data.data); err != nil {
-		return fmt.Errorf("failed to encode metrics to JSON: %w", err)
-	}
-
-	bytesToSend := w.buffs.data.Bytes()
-
-	var sigHash string
-	if w.config.SecretKey != nil {
-		hash, err := encryption.SignData(bytesToSend, w.config.SecretKey)
-		if err != nil {
-			return fmt.Errorf("failed to sign request data: %w", err)
-		}
-		sigHash = hash
-		w.buffs.data = *bytes.NewBuffer(bytesToSend)
-	}
-
-	if w.config.EncPublicKey != nil {
-		encData, err := encryption.EncryptRequestBody(&w.buffs.data, w.config.EncPublicKey)
-		if err != nil {
-			return fmt.Errorf("failed to encrypt report request data: %v", err)
-		}
-		bytesToSend = encData.Bytes()
-	}
-
-	compressedBytes, err := w.getCompressedBytes()
-	if err != nil {
-		w.log.Debugf("Unable to enable compression: %v", err)
-	} else {
-		bytesToSend = compressedBytes
-		contentEncoding = w.config.CompressAlgo
-	}
-
-	req, err := http.NewRequest(http.MethodPost, reportURL, bytes.NewBuffer(bytesToSend))
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set("Content-Type", contentType)
-	req.Header.Set("Content-Encoding", contentEncoding)
-	req.Header.Set("X-Real-IP", w.config.HostIPAddr)
-
-	if len(sigHash) != 0 {
-		req.Header.Set("HashSHA256", sigHash)
-	}
-
-	resp, err := w.httpClient.Send(req)
-
-	if resp != nil {
-		defer func() {
-			_, err = io.Copy(io.Discard, resp.Body)
-			if err != nil {
-				w.log.Debugf("Failed reading request body: %v", err)
-			}
-			err = resp.Body.Close()
-			if err != nil {
-				w.log.Debugf("Failed to close resp body: %v", err)
-			}
-		}()
-
-		if resp.StatusCode != http.StatusOK {
-			err = fmt.Errorf("failed to send metrics. Status code: %v", resp.StatusCode)
-		}
-	}
-
-	return err
-}
-
-func (a *Agent) reportMetrics(ctx context.Context, mstorage storage.MetricsStorage, gatherChan chan<- reportData) {
+func (a *Agent) reportMetrics(ctx context.Context, mstorage storage.MetricsStorage, gatherChan chan<- worker.ReportData) {
 	allMetrics := mstorage.GetAllMetrics()
 
 	if len(allMetrics) == 0 {
 		return
 	}
 
-	rData := reportData{}
-	rData.data = allMetrics
-	rData.dType = tBULK
+	rData := worker.ReportData{
+		Data:  allMetrics,
+		DType: worker.BULK,
+	}
 
 	select {
 	case gatherChan <- rData:
@@ -219,7 +73,10 @@ func (a *Agent) reportMetrics(ctx context.Context, mstorage storage.MetricsStora
 	}
 
 	for _, m := range allMetrics {
-		rData := reportData{dType: tSINGLE, data: storage.StorageMetric(m)}
+		rData := worker.ReportData{
+			DType: worker.SINGLE,
+			Data:  storage.StorageMetric(m),
+		}
 		select {
 		case gatherChan <- rData:
 		case <-ctx.Done():
@@ -233,7 +90,7 @@ func (a *Agent) reportMetrics(ctx context.Context, mstorage storage.MetricsStora
 func (a *Agent) Run() {
 	a.config.Print(a.log)
 
-	gatherChan := make(chan reportData, a.config.RateLimit)
+	gatherChan := make(chan worker.ReportData, a.config.RateLimit)
 	defer close(gatherChan)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -277,14 +134,25 @@ func (a *Agent) Run() {
 	wg.Add(int(a.config.RateLimit))
 	for i := 0; i < int(a.config.RateLimit); i++ {
 		i := i
+		var w worker.AgentWorker
+		if a.config.ClientType == common.ModeHTTP {
+			w = worker.NewWorkerHTTP(&a.config, a.log, monitorHttp.NewDefaultHTTPClient())
+		} else {
+			work, err := worker.NewWorkerGRPC(&a.config)
+			if err != nil {
+				a.log.Fatalf("Failed to create GRPC worker: %w", err)
+			}
+			w = work
+		}
+
 		go func() {
 			defer wg.Done()
-			w := newWorker(&a.config, a.log, monitorHttp.NewDefaultHTTPClient())
+
 			for {
 				select {
 				case data := <-gatherChan:
 					err := retryExecutor.RetryOnError(func() error {
-						return w.reportDataJSON(data)
+						return w.ReportData(data)
 					})
 					if err != nil {
 						a.log.Errorf("failed to report metrics: %v", err)

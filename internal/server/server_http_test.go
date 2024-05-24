@@ -9,8 +9,8 @@ import (
 
 	"github.com/fuzzy-toozy/metrics-service/internal/log"
 	"github.com/fuzzy-toozy/metrics-service/internal/metrics"
-	"github.com/fuzzy-toozy/metrics-service/internal/server/config"
 	"github.com/fuzzy-toozy/metrics-service/internal/server/handlers"
+	"github.com/fuzzy-toozy/metrics-service/internal/server/service"
 	"github.com/fuzzy-toozy/metrics-service/internal/server/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -125,8 +125,8 @@ func TestMetrics(t *testing.T) {
 	registry := storage.NewCommonMetricsRepository()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := handlers.NewMetricRegistryHandler(registry, log.NewDummyLogger(),
-				handlers.MetricURLInfo{Type: "mtype", Name: "mname", Value: "mval"}, nil, config.DBConfig{})
+			h := handlers.NewMetricRegistryHandler(service.NewCommonMetricsServiceHTTP(registry), log.NewDummyLogger(),
+				handlers.MetricURLInfo{Type: "mtype", Name: "mname", Value: "mval"}, nil)
 			r := handlers.SetupRouting(h)
 			r.ServeHTTP(tt.args.w, tt.args.r)
 			resp := tt.args.w.(*httptest.ResponseRecorder)

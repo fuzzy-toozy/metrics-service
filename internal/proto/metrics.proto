@@ -1,0 +1,34 @@
+syntax = "proto3";
+
+package proto;
+
+option go_package = "github.com/fuzzy-toozy/metrics-service/internal/proto";
+
+import "google/protobuf/empty.proto";
+
+message Metric {
+	int64 delta = 1;
+	double value = 2;
+	string id = 3;
+	string mtype = 4;
+}
+
+message MetricRequest {
+  	string id = 1;
+	string mtype = 2;
+}
+
+message Metrics {
+    repeated Metric metrics = 1;
+}
+
+message UpdateRequest {
+    bytes data = 1;
+}
+
+service MetricsService {
+    rpc GetMetric(MetricRequest) returns (Metric);
+    rpc UpdateMetric(UpdateRequest) returns (Metric);
+    rpc UpdateMetrics(UpdateRequest) returns (Metrics);
+    rpc GetAllMetrics(google.protobuf.Empty) returns (Metrics);
+}

@@ -5,54 +5,60 @@ import (
 	"context"
 	"errors"
 	"net/http"
+
+	"google.golang.org/grpc/codes"
 )
 
-type genericErrorWrapper struct {
+type GenericErrorWrapper struct {
 	err error
 }
 
-func (e genericErrorWrapper) Error() string {
+func (e GenericErrorWrapper) Error() string {
 	return e.err.Error()
 }
 
-func (e genericErrorWrapper) Unwrap() error {
+func (e GenericErrorWrapper) Unwrap() error {
 	return e.err
 }
 
 type ServerError struct {
-	genericErrorWrapper
+	GenericErrorWrapper
 }
 
 type BadDataError struct {
-	genericErrorWrapper
+	GenericErrorWrapper
 }
 
 type NotFoundError struct {
-	genericErrorWrapper
+	GenericErrorWrapper
+}
+
+func MakeGenericErrorWrapper(err error) GenericErrorWrapper {
+	return GenericErrorWrapper{err: err}
 }
 
 func MakeServerError(err error) ServerError {
-	return ServerError{genericErrorWrapper: genericErrorWrapper{err: err}}
+	return ServerError{GenericErrorWrapper: GenericErrorWrapper{err: err}}
 }
 
 func MakeBadDataError(err error) BadDataError {
-	return BadDataError{genericErrorWrapper: genericErrorWrapper{err: err}}
+	return BadDataError{GenericErrorWrapper: GenericErrorWrapper{err: err}}
 }
 
 func MakeNotFoundError(err error) NotFoundError {
-	return NotFoundError{genericErrorWrapper: genericErrorWrapper{err: err}}
+	return NotFoundError{GenericErrorWrapper: GenericErrorWrapper{err: err}}
 }
 
-func ErrorToStatus(err error) int {
-	status := http.StatusOK
+func ErrorToStatusHTTP(err error) int {
+	if err == nil {
+		return http.StatusOK
+	}
 
-	var serverError ServerError
+	status := http.StatusInternalServerError
 	var notFoundError NotFoundError
 	var requestError BadDataError
 
-	if errors.As(err, &serverError) {
-		status = http.StatusInternalServerError
-	} else if errors.As(err, &notFoundError) {
+	if errors.As(err, &notFoundError) {
 		status = http.StatusNotFound
 	} else if errors.As(err, &requestError) {
 		status = http.StatusBadRequest
@@ -61,4 +67,24 @@ func ErrorToStatus(err error) int {
 	}
 
 	return status
+}
+
+func ErrorToStatusGRPC(err error) int {
+	if err == nil {
+		return int(codes.OK)
+	}
+
+	status := codes.Internal
+	var notFoundError NotFoundError
+	var requestError BadDataError
+
+	if errors.As(err, &notFoundError) {
+		status = codes.NotFound
+	} else if errors.As(err, &requestError) {
+		status = codes.InvalidArgument
+	} else if errors.Is(err, context.DeadlineExceeded) {
+		status = codes.DeadlineExceeded
+	}
+
+	return int(status)
 }

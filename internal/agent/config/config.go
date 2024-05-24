@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/caarlos0/env"
+	"github.com/fuzzy-toozy/metrics-service/internal/common"
 	"github.com/fuzzy-toozy/metrics-service/internal/config"
 	"github.com/fuzzy-toozy/metrics-service/internal/encryption"
 	"github.com/fuzzy-toozy/metrics-service/internal/log"
@@ -45,7 +46,8 @@ type Config struct {
 	// ReportInterval interval for reporting metrics to server.
 	ReportInterval config.DurationOption `json:"report_interval"`
 	// RateLimit max amount of concurrent connections to server.
-	RateLimit uint `json:"concurrent_connections"`
+	RateLimit  uint   `json:"concurrent_connections"`
+	ClientType string `json:"client_type"`
 }
 
 func getEndpoint(address, url string) string {
@@ -101,6 +103,7 @@ func (c *Config) setDefaultValues() {
 	const defaultReportBulkURL = "/updates"
 	const defaultServerAddress = "localhost:8080"
 	const defaultCompressAlgo = "gzip"
+	const defaultClientType = "http"
 
 	if c.RateLimit == 0 {
 		c.RateLimit = defaultConcurentConnections
@@ -129,6 +132,10 @@ func (c *Config) setDefaultValues() {
 	if len(c.CompressAlgo) == 0 {
 		c.CompressAlgo = defaultCompressAlgo
 	}
+
+	if len(c.ClientType) == 0 {
+		c.ClientType = defaultClientType
+	}
 }
 
 // BuildConfig parses environment varialbes, command line parameters and builds agent's config.
@@ -140,6 +147,7 @@ func BuildConfig() (*Config, error) {
 		reportURL      string
 		reportBulkURL  string
 		configFilePath string
+		clientType     string
 		rateLimit      uint
 		pollInterval   config.DurationOption
 		reportInterval config.DurationOption
@@ -155,6 +163,7 @@ func BuildConfig() (*Config, error) {
 	flag.StringVar(&reportURL, "u", "", "Server endpoint path")
 	flag.StringVar(&configFilePath, "c", "", "Config file path")
 	flag.StringVar(&configFilePath, "config", "", "Config file path")
+	flag.StringVar(&clientType, "client", "", "Client type. HTTP or GRPC")
 
 	flag.StringVar(&reportBulkURL, "ub", "", "Server endpoint path")
 	flag.UintVar(&rateLimit, "l", 0, "Max concurent connections")
@@ -231,6 +240,14 @@ func BuildConfig() (*Config, error) {
 	}
 
 	c.HostIPAddr = addr.String()
+
+	if len(clientType) != 0 {
+		c.ClientType = strings.ToLower(clientType)
+	}
+
+	if c.ClientType != common.ModeHTTP && c.ClientType != common.ModeGRPC {
+		return nil, fmt.Errorf("wrong client type. Only HTTP and GRPC supported")
+	}
 
 	return &c, err
 }

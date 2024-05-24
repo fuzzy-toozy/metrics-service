@@ -10,8 +10,7 @@ import (
 
 	"github.com/fuzzy-toozy/metrics-service/internal/log"
 	"github.com/fuzzy-toozy/metrics-service/internal/metrics"
-	"github.com/fuzzy-toozy/metrics-service/internal/server/config"
-	"github.com/fuzzy-toozy/metrics-service/internal/server/errtypes"
+	"github.com/fuzzy-toozy/metrics-service/internal/server/service"
 	"github.com/fuzzy-toozy/metrics-service/internal/server/storage"
 	"github.com/go-chi/chi"
 )
@@ -23,12 +22,11 @@ type MetricURLInfo struct {
 }
 
 type MetricRegistryHandler struct {
-	registry       storage.Repository
-	log            log.Logger
-	metricInfo     MetricURLInfo
-	allMetrics     *template.Template
-	storageSaver   storage.StorageSaver
-	databaseConfig config.DBConfig
+	serv         service.MetricsService
+	log          log.Logger
+	metricInfo   MetricURLInfo
+	allMetrics   *template.Template
+	storageSaver storage.StorageSaver
 }
 
 func setJSONContent(w http.ResponseWriter) {
@@ -71,7 +69,7 @@ func respMetricsJSON(m []metrics.Metric, w http.ResponseWriter, status int, log 
 // @Failure 500 {string} string
 // @Router /ping [get]
 func (h *MetricRegistryHandler) HealthCheck(w http.ResponseWriter, r *http.Request) {
-	err := h.registry.HealthCheck()
+	err := h.serv.HealthCheck()
 
 	if err != nil {
 		h.log.Errorf("Failed to perform registry health check: %v", err)
@@ -91,12 +89,10 @@ func (h *MetricRegistryHandler) GetMetricURLInfo() MetricURLInfo {
 }
 
 func (h *MetricRegistryHandler) getMetric(name string, mtype string) (val string, status int, err error) {
-	m, err := h.registry.Get(name, mtype)
+	m, servErr := h.serv.GetMetric(name, mtype)
 
-	status = errtypes.ErrorToStatus(err)
-
-	if err != nil {
-		return "", status, err
+	if servErr != nil {
+		return "", servErr.Code(), err
 	}
 
 	val, err = m.GetData()
@@ -234,18 +230,18 @@ func (h *MetricRegistryHandler) GetAllMetrics(w http.ResponseWriter, r *http.Req
 		Val  string
 	}
 
-	repoMetrics, err := h.registry.GetAll()
+	repoMetrics, servErr := h.serv.GetAllMetrics()
 
-	if err != nil {
-		h.log.Errorf("Failed to get all metrics: %v", err)
-		http.Error(w, "", http.StatusInternalServerError)
+	if servErr != nil {
+		h.log.Errorf("Failed to get all metrics: %v", servErr)
+		http.Error(w, "", servErr.Code())
 		return
 	}
 
 	metrics := make([]MetricInfo, 0, len(repoMetrics))
 	for _, m := range repoMetrics {
 		var data string
-		data, err = m.GetData()
+		data, err := m.GetData()
 		if err != nil {
 			h.log.Errorf("Failed to get all metrics: %v", err)
 			http.Error(w, "", http.StatusInternalServerError)
@@ -281,7 +277,7 @@ func (h *MetricRegistryHandler) GetAllMetrics(w http.ResponseWriter, r *http.Req
 
 	if h.allMetrics == nil {
 		var tmpl *template.Template
-		tmpl, err = template.New("AllMetrics").Parse(pageTempl)
+		tmpl, err := template.New("AllMetrics").Parse(pageTempl)
 
 		if err != nil {
 			h.log.Debugf("Parsing template failed: %v", err)
@@ -293,7 +289,7 @@ func (h *MetricRegistryHandler) GetAllMetrics(w http.ResponseWriter, r *http.Req
 	}
 
 	w.Header().Set("Content-Type", "text/html")
-	err = h.allMetrics.Execute(w, metrics)
+	err := h.allMetrics.Execute(w, metrics)
 
 	if err != nil {
 		h.log.Errorf("Failed to execute tempalate: %v", err)
@@ -302,24 +298,6 @@ func (h *MetricRegistryHandler) GetAllMetrics(w http.ResponseWriter, r *http.Req
 	}
 
 	w.WriteHeader(http.StatusOK)
-}
-
-func (h *MetricRegistryHandler) updateMetric(mtype, mname, mvalue string) (metricValue string, statusCode int, err error) {
-	updatedVal, err := h.registry.AddOrUpdate(mname, mvalue, mtype)
-
-	status := errtypes.ErrorToStatus(err)
-	if err != nil {
-		return "", status, err
-	}
-
-	if h.storageSaver != nil {
-		err := h.storageSaver.Save()
-		if err != nil {
-			h.log.Errorf("Failed to update persistent storage: %v", err)
-		}
-	}
-
-	return updatedVal, status, nil
 }
 
 // UpdateMetric Updates the specified metric with the provided value.
@@ -342,14 +320,25 @@ func (h *MetricRegistryHandler) UpdateMetric(w http.ResponseWriter, r *http.Requ
 	metricValue := strings.ToLower(chi.URLParam(r, h.metricInfo.Value))
 	metricName := chi.URLParam(r, h.metricInfo.Name)
 
-	value, status, err := h.updateMetric(metricType, metricName, metricValue)
+	m, servErr := h.serv.UpdateMetric(metricType, metricName, metricValue)
 
-	if err != nil {
-		h.log.Debugf("Failed to update metric: %v", err)
+	if servErr != nil {
+		h.log.Debugf("Failed to update metric: %v", servErr)
+		w.WriteHeader(servErr.Code())
+	} else {
+		w.WriteHeader(http.StatusOK)
 	}
 
-	w.WriteHeader(status)
-	_, err = w.Write([]byte(value))
+	if h.storageSaver != nil {
+		err := h.storageSaver.Save()
+		if err != nil {
+			h.log.Errorf("Failed to update persistent storage: %v", err)
+		}
+	}
+
+	updatedData, _ := m.GetData()
+
+	_, err := w.Write([]byte(updatedData))
 	if err != nil {
 		h.log.Errorf("Failed to write response body: %v", err)
 	}
@@ -402,15 +391,21 @@ func (h *MetricRegistryHandler) UpdateMetricsFromJSON(w http.ResponseWriter, r *
 		return
 	}
 
-	err := h.registry.AddMetricsBulk(receivedData)
-	status := errtypes.ErrorToStatus(err)
-	if err != nil {
-		h.log.Errorf("Failed to add metrics: %v", err)
-		respEmptyJSON(w, status, h.log)
+	servErr := h.serv.UpdateMetrics(receivedData)
+	if servErr != nil {
+		h.log.Errorf("Failed to add metrics: %v", servErr)
+		respEmptyJSON(w, servErr.Code(), h.log)
 		return
 	}
 
-	respMetricsJSON(receivedData, w, status, h.log)
+	if h.storageSaver != nil {
+		err := h.storageSaver.Save()
+		if err != nil {
+			h.log.Errorf("Failed to update persistent storage: %v", err)
+		}
+	}
+
+	respMetricsJSON(receivedData, w, http.StatusOK, h.log)
 }
 
 // UpdateMetricFromJSON updates or adds metrics received in request.
@@ -476,36 +471,36 @@ func (h *MetricRegistryHandler) UpdateMetricFromJSON(w http.ResponseWriter, r *h
 		return
 	}
 
-	value, status, err := h.updateMetric(receivedData.MType, receivedData.ID, value)
+	m, servErr := h.serv.UpdateMetric(receivedData.MType, receivedData.ID, value)
 
-	if err != nil {
-		h.log.Debugf("Failed to update metric: %v", err)
-		respEmptyJSON(w, status, h.log)
+	if servErr != nil {
+		h.log.Debugf("Failed to update metric: %v", servErr)
+		respEmptyJSON(w, servErr.Code(), h.log)
 		return
 	}
 
-	respData, err := metrics.NewMetric(receivedData.ID, value, receivedData.MType)
-	if err != nil {
-		h.log.Errorf("Failed to create response data metric: %v", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		return
+	if h.storageSaver != nil {
+		err := h.storageSaver.Save()
+		if err != nil {
+			h.log.Errorf("Failed to update persistent storage: %v", err)
+		}
 	}
 
-	respMetricJSON(respData, w, status, h.log)
+	respMetricJSON(m, w, http.StatusOK, h.log)
 }
 
-func NewMetricRegistryHandler(registry storage.Repository, logger log.Logger, minfo MetricURLInfo,
-	storageSaver storage.StorageSaver, DBConfig config.DBConfig) *MetricRegistryHandler {
-	return &MetricRegistryHandler{registry: registry, log: logger, metricInfo: minfo, storageSaver: storageSaver, databaseConfig: DBConfig}
+func NewMetricRegistryHandler(serv service.MetricsService, logger log.Logger, minfo MetricURLInfo,
+	storageSaver storage.StorageSaver) *MetricRegistryHandler {
+	return &MetricRegistryHandler{serv: serv, log: logger, metricInfo: minfo, storageSaver: storageSaver}
 }
 
-func NewDefaultMetricRegistryHandler(logger log.Logger, registry storage.Repository,
-	storageSaver storage.StorageSaver, config config.DBConfig) (*MetricRegistryHandler, error) {
+func NewDefaultMetricRegistryHandler(logger log.Logger, serv service.MetricsService,
+	storageSaver storage.StorageSaver) (*MetricRegistryHandler, error) {
 	minfo := MetricURLInfo{
 		Name:  "metricName",
 		Value: "metricValue",
 		Type:  "metricType",
 	}
 
-	return NewMetricRegistryHandler(registry, logger, minfo, storageSaver, config), nil
+	return NewMetricRegistryHandler(serv, logger, minfo, storageSaver), nil
 }

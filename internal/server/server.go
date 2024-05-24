@@ -10,15 +10,20 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/fuzzy-toozy/metrics-service/internal/common"
 	logging "github.com/fuzzy-toozy/metrics-service/internal/log"
 	"github.com/fuzzy-toozy/metrics-service/internal/server/config"
-	"github.com/fuzzy-toozy/metrics-service/internal/server/handlers"
 	"github.com/fuzzy-toozy/metrics-service/internal/server/storage"
 	"golang.org/x/sync/errgroup"
 )
 
+type MetricsServer interface {
+	Run() error
+	Stop(context.Context) error
+}
+
 type Server struct {
-	httpServer        *http.Server
+	metricsServer     MetricsServer
 	asyncStorageSaver *storage.PeriodicSaver
 	storageSaver      storage.StorageSaver
 	metricsStorage    storage.Repository
@@ -51,11 +56,6 @@ func NewServer(logger logging.Logger) (*Server, error) {
 		s.metricsStorage = storage.NewCommonMetricsRepository()
 	}
 
-	registryHandler, err := handlers.NewDefaultMetricRegistryHandler(logger, s.metricsStorage, s.storageSaver, config.DatabaseConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create server: %w", err)
-	}
-
 	if config.RestoreData && !config.DatabaseConfig.UseDatabase {
 		const perms = 0444
 		f, err := os.OpenFile(config.StoreFilePath, os.O_RDONLY, perms)
@@ -81,27 +81,17 @@ func NewServer(logger logging.Logger) (*Server, error) {
 		}
 	}
 
-	serverHandler := handlers.SetupRouting(registryHandler)
-
-	if s.config.SecretKey != nil {
-		serverHandler = handlers.WithSignatureCheck(serverHandler, logger, config.SecretKey)
+	if config.WorkMode == common.ModeGRPC {
+		s.metricsServer, err = NewServerGRPC(config, logger, s.metricsStorage, s.storageSaver)
+	} else if config.WorkMode == common.ModeHTTP {
+		s.metricsServer, err = NewServerHTTP(config, logger, s.metricsStorage, s.storageSaver)
+	} else {
+		err = fmt.Errorf("unknown work mode: %v", config.WorkMode)
 	}
 
-	if s.config.EncryptPrivKey != nil {
-		serverHandler = handlers.WithDecryption(serverHandler, logger, s.config.EncryptPrivKey)
+	if err != nil {
+		return nil, err
 	}
-
-	serverHandler = handlers.WithCompression(serverHandler, logger)
-
-	serverHandler = handlers.WithBodySizeLimit(serverHandler, config.MaxBodySize)
-
-	if s.config.TrustedSubnetAddr != nil {
-		serverHandler = handlers.WithSubnetFilter(serverHandler, logger, s.config.TrustedSubnetAddr)
-	}
-
-	serverHandler = handlers.WithLogging(serverHandler, logger)
-
-	s.httpServer = NewDefaultHTTPServer(*config, logger, serverHandler)
 
 	return &s, nil
 }
@@ -110,11 +100,11 @@ func (s *Server) Run() error {
 	s.config.Print(s.logger)
 
 	start := func() error {
-		return s.httpServer.ListenAndServe()
+		return s.metricsServer.Run()
 	}
 
 	stop := func() error {
-		err := s.httpServer.Shutdown(context.Background())
+		err := s.metricsServer.Stop(context.Background())
 		if err != nil {
 			s.logger.Errorf("server shutdown failed: %w", err)
 		}
