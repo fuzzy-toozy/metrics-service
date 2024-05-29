@@ -1,4 +1,4 @@
-package handlers
+package mhttp
 
 // Provides handlers to access metrics storage.
 
@@ -11,7 +11,6 @@ import (
 	"github.com/fuzzy-toozy/metrics-service/internal/log"
 	"github.com/fuzzy-toozy/metrics-service/internal/metrics"
 	"github.com/fuzzy-toozy/metrics-service/internal/server/service"
-	"github.com/fuzzy-toozy/metrics-service/internal/server/storage"
 	"github.com/go-chi/chi"
 )
 
@@ -22,11 +21,10 @@ type MetricURLInfo struct {
 }
 
 type MetricRegistryHandler struct {
-	serv         service.MetricsService
-	log          log.Logger
-	metricInfo   MetricURLInfo
-	allMetrics   *template.Template
-	storageSaver storage.StorageSaver
+	serv       service.MetricsService
+	log        log.Logger
+	metricInfo MetricURLInfo
+	allMetrics *template.Template
 }
 
 func setJSONContent(w http.ResponseWriter) {
@@ -329,13 +327,6 @@ func (h *MetricRegistryHandler) UpdateMetric(w http.ResponseWriter, r *http.Requ
 		w.WriteHeader(http.StatusOK)
 	}
 
-	if h.storageSaver != nil {
-		err := h.storageSaver.Save()
-		if err != nil {
-			h.log.Errorf("Failed to update persistent storage: %v", err)
-		}
-	}
-
 	updatedData, _ := m.GetData()
 
 	_, err := w.Write([]byte(updatedData))
@@ -391,21 +382,14 @@ func (h *MetricRegistryHandler) UpdateMetricsFromJSON(w http.ResponseWriter, r *
 		return
 	}
 
-	servErr := h.serv.UpdateMetrics(receivedData)
+	respM, servErr := h.serv.UpdateMetrics(receivedData)
 	if servErr != nil {
 		h.log.Errorf("Failed to add metrics: %v", servErr)
 		respEmptyJSON(w, servErr.Code(), h.log)
 		return
 	}
 
-	if h.storageSaver != nil {
-		err := h.storageSaver.Save()
-		if err != nil {
-			h.log.Errorf("Failed to update persistent storage: %v", err)
-		}
-	}
-
-	respMetricsJSON(receivedData, w, http.StatusOK, h.log)
+	respMetricsJSON(respM, w, http.StatusOK, h.log)
 }
 
 // UpdateMetricFromJSON updates or adds metrics received in request.
@@ -479,28 +463,19 @@ func (h *MetricRegistryHandler) UpdateMetricFromJSON(w http.ResponseWriter, r *h
 		return
 	}
 
-	if h.storageSaver != nil {
-		err := h.storageSaver.Save()
-		if err != nil {
-			h.log.Errorf("Failed to update persistent storage: %v", err)
-		}
-	}
-
 	respMetricJSON(m, w, http.StatusOK, h.log)
 }
 
-func NewMetricRegistryHandler(serv service.MetricsService, logger log.Logger, minfo MetricURLInfo,
-	storageSaver storage.StorageSaver) *MetricRegistryHandler {
-	return &MetricRegistryHandler{serv: serv, log: logger, metricInfo: minfo, storageSaver: storageSaver}
+func NewMetricRegistryHandler(serv service.MetricsService, logger log.Logger, minfo MetricURLInfo) *MetricRegistryHandler {
+	return &MetricRegistryHandler{serv: serv, log: logger, metricInfo: minfo}
 }
 
-func NewDefaultMetricRegistryHandler(logger log.Logger, serv service.MetricsService,
-	storageSaver storage.StorageSaver) (*MetricRegistryHandler, error) {
+func NewDefaultMetricRegistryHandler(logger log.Logger, serv service.MetricsService) (*MetricRegistryHandler, error) {
 	minfo := MetricURLInfo{
 		Name:  "metricName",
 		Value: "metricValue",
 		Type:  "metricType",
 	}
 
-	return NewMetricRegistryHandler(serv, logger, minfo, storageSaver), nil
+	return NewMetricRegistryHandler(serv, logger, minfo), nil
 }

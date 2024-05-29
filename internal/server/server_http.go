@@ -7,7 +7,7 @@ import (
 
 	logging "github.com/fuzzy-toozy/metrics-service/internal/log"
 	"github.com/fuzzy-toozy/metrics-service/internal/server/config"
-	"github.com/fuzzy-toozy/metrics-service/internal/server/handlers"
+	"github.com/fuzzy-toozy/metrics-service/internal/server/handlers/mhttp"
 	"github.com/fuzzy-toozy/metrics-service/internal/server/service"
 	"github.com/fuzzy-toozy/metrics-service/internal/server/storage"
 )
@@ -28,37 +28,37 @@ func (s *ServerHTTP) Stop(ctx context.Context) error {
 	return s.serverHTTP.Shutdown(ctx)
 }
 
-func NewServerHTTP(config *config.Config, logger logging.Logger, metricsStorage storage.Repository, storageSaver storage.StorageSaver) (*ServerHTTP, error) {
+func NewServerHTTP(config *config.Config, logger logging.Logger, metricsStorage storage.Repository) (*ServerHTTP, error) {
 
 	s := &ServerHTTP{
 		config: config,
 		log:    logger,
 	}
 
-	registryHandler, err := handlers.NewDefaultMetricRegistryHandler(logger, service.NewCommonMetricsServiceHTTP(metricsStorage), storageSaver)
+	registryHandler, err := mhttp.NewDefaultMetricRegistryHandler(logger, service.NewCommonMetricsServiceHTTP(metricsStorage))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create server: %w", err)
 	}
 
-	serverHandler := handlers.SetupRouting(registryHandler)
+	serverHandler := mhttp.SetupRouting(registryHandler)
 
 	if s.config.SecretKey != nil {
-		serverHandler = handlers.WithSignatureCheck(serverHandler, logger, config.SecretKey)
+		serverHandler = mhttp.WithSignatureCheck(serverHandler, logger, config.SecretKey)
 	}
 
 	if s.config.EncryptPrivKey != nil {
-		serverHandler = handlers.WithDecryption(serverHandler, logger, s.config.EncryptPrivKey)
+		serverHandler = mhttp.WithDecryption(serverHandler, logger, s.config.EncryptPrivKey)
 	}
 
-	serverHandler = handlers.WithCompression(serverHandler, logger)
+	serverHandler = mhttp.WithCompression(serverHandler, logger)
 
-	serverHandler = handlers.WithBodySizeLimit(serverHandler, config.MaxBodySize)
+	serverHandler = mhttp.WithBodySizeLimit(serverHandler, config.MaxBodySize)
 
 	if s.config.TrustedSubnetAddr != nil {
-		serverHandler = handlers.WithSubnetFilter(serverHandler, logger, s.config.TrustedSubnetAddr)
+		serverHandler = mhttp.WithSubnetFilter(serverHandler, logger, s.config.TrustedSubnetAddr)
 	}
 
-	serverHandler = handlers.WithLogging(serverHandler, logger)
+	serverHandler = mhttp.WithLogging(serverHandler, logger)
 
 	s.serverHTTP = &http.Server{
 		Addr:         config.ServerAddress,

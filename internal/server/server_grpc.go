@@ -2,16 +2,21 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"net"
 
+	"github.com/fuzzy-toozy/metrics-service/internal/encryption"
 	logging "github.com/fuzzy-toozy/metrics-service/internal/log"
 	pb "github.com/fuzzy-toozy/metrics-service/internal/proto"
 	"github.com/fuzzy-toozy/metrics-service/internal/server/config"
-	"github.com/fuzzy-toozy/metrics-service/internal/server/handlers"
+	"github.com/fuzzy-toozy/metrics-service/internal/server/handlers/mgrpc"
 	"github.com/fuzzy-toozy/metrics-service/internal/server/service"
 	"github.com/fuzzy-toozy/metrics-service/internal/server/storage"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapgrpc"
 	"google.golang.org/grpc"
 	_ "google.golang.org/grpc/encoding/gzip"
+	"google.golang.org/grpc/grpclog"
 )
 
 type ServerGRPC struct {
@@ -23,37 +28,44 @@ type ServerGRPC struct {
 
 var _ MetricsServer = (*ServerGRPC)(nil)
 
-func NewServerGRPC(config *config.Config, logger logging.Logger, metricsStorage storage.Repository, storageSaver storage.StorageSaver) (*ServerGRPC, error) {
-	registry := handlers.NewMetricsRegistryGRPC(service.NewCommonMetricsServiceGRPC(metricsStorage), storageSaver, logger)
+func NewServerGRPC(config *config.Config, logger *zap.Logger, metricsStorage storage.Repository) (*ServerGRPC, error) {
+	registry := mgrpc.NewMetricsRegistryGRPC(service.NewCommonMetricsServiceGRPC(metricsStorage), logger.Sugar())
 
 	listener, err := net.Listen("tcp", config.ServerAddress)
 	if err != nil {
 		return nil, err
 	}
 
-	ic := make([]grpc.UnaryServerInterceptor, 0)
+	var ic []grpc.UnaryServerInterceptor
+	var opts []grpc.ServerOption
 
-	ic = append(ic, handlers.WithLoggingGRPC(logger))
+	grpclog.SetLoggerV2(zapgrpc.NewLogger(logger))
+
+	ic = append(ic, mgrpc.WithLoggingGRPC(logger.Sugar()))
 
 	if config.TrustedSubnetAddr != nil {
-		ic = append(ic, handlers.WithSubnetFilterGRPC(logger, config.TrustedSubnetAddr))
+		ic = append(ic, mgrpc.WithSubnetFilterGRPC(logger.Sugar(), config.TrustedSubnetAddr))
 	}
 
-	if config.EncryptPrivKey != nil {
-		ic = append(ic, handlers.WithEncryptionGRPC(logger, config.EncryptPrivKey))
+	if len(config.CaCertPath) > 0 {
+		creds, err := encryption.SetupServerTLS(config.CaCertPath, config.EncKeyPath, config.ServerCertPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to setup TLS: %w", err)
+		}
+
+		opts = append(opts, grpc.Creds(creds))
 	}
 
-	if len(config.SecretKey) > 0 {
-		ic = append(ic, handlers.WithSignatureGRPC(logger, config.SecretKey))
-	}
+	opts = append(opts, grpc.MaxRecvMsgSize(int(config.MaxBodySize)))
+	opts = append(opts, grpc.ChainUnaryInterceptor(ic...))
 
-	s := grpc.NewServer(grpc.MaxRecvMsgSize(int(config.MaxBodySize)), grpc.ChainUnaryInterceptor(ic...))
+	s := grpc.NewServer(opts...)
 
 	pb.RegisterMetricsServiceServer(s, registry)
 
 	return &ServerGRPC{
 		config:     config,
-		log:        logger,
+		log:        logger.Sugar(),
 		serverGRPC: s,
 		listener:   listener,
 	}, nil

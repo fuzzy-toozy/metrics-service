@@ -27,6 +27,9 @@ func (c DummyClient) Send(r *http.Request) (*http.Response, error) {
 	}, nil
 }
 
+func (c DummyClient) SetTransport(t http.RoundTripper) {
+}
+
 func BenchmarkReportMetrics(b *testing.B) {
 	logger := log.NewDevZapLogger()
 	os.Args = os.Args[0:1]

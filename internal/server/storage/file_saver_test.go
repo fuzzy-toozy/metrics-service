@@ -38,7 +38,8 @@ func getMetricsFromFile(fileName string) ([]metrics.Metric, error) {
 }
 
 func Test_FileSaver(t *testing.T) {
-	repo := NewCommonMetricsRepository()
+	logger := log.NewDevZapLogger()
+	repo := NewCommonMetricsRepository(nil, logger)
 	outFile := "repoFile.out"
 	defer func() {
 		err := os.Remove(outFile)
@@ -46,8 +47,7 @@ func Test_FileSaver(t *testing.T) {
 			fmt.Printf("Failed to remove file: %v\n", err)
 		}
 	}()
-	logger := log.NewDevZapLogger()
-	fs := NewFileSaver(repo, outFile, logger)
+	fs := NewFileSaver(outFile, logger)
 
 	id := guid.NewString()
 	intVal := rand.Int63()
@@ -57,7 +57,7 @@ func Test_FileSaver(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, v, intStr)
 
-	err = fs.Save()
+	err = repo.Save(fs)
 	require.NoError(t, err)
 
 	m, err := getMetricsFromFile(outFile)
@@ -71,7 +71,8 @@ func Test_FileSaver(t *testing.T) {
 }
 
 func Test_PeriodicFileSaver(t *testing.T) {
-	repo := NewCommonMetricsRepository()
+	logger := log.NewDevZapLogger()
+	repo := NewCommonMetricsRepository(nil, logger)
 	outFile := "repoFile.out"
 	defer func() {
 		err := os.RemoveAll(outFile)
@@ -79,11 +80,10 @@ func Test_PeriodicFileSaver(t *testing.T) {
 			fmt.Printf("Failed to remove file: %v\n", err)
 		}
 	}()
-	logger := log.NewDevZapLogger()
 
 	dur := time.Duration(1+rand.Int31()%500) * time.Millisecond
-	fs := NewFileSaver(repo, outFile, logger)
-	pfs := NewPeriodicSaver(dur, logger, fs)
+	fs := NewFileSaver(outFile, logger)
+	pfs := NewPeriodicSaver(dur, logger, fs, repo)
 
 	id := guid.NewString()
 	intVal := rand.Int63()

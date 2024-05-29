@@ -1,15 +1,16 @@
-package handlers
+package mhttp
 
 import (
 	"net"
 	"net/http"
 
+	"github.com/fuzzy-toozy/metrics-service/internal/common"
 	logging "github.com/fuzzy-toozy/metrics-service/internal/log"
 )
 
 func WithSubnetFilter(h http.Handler, log logging.Logger, subnet *net.IPNet) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		realIP := r.Header.Get("X-Real-IP")
+		realIP := r.Header.Get(common.IPAddrKey)
 
 		parsedIP := net.ParseIP(realIP)
 

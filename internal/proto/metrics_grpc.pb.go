@@ -31,8 +31,8 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type MetricsServiceClient interface {
 	GetMetric(ctx context.Context, in *MetricRequest, opts ...grpc.CallOption) (*Metric, error)
-	UpdateMetric(ctx context.Context, in *UpdateRequest, opts ...grpc.CallOption) (*Metric, error)
-	UpdateMetrics(ctx context.Context, in *UpdateRequest, opts ...grpc.CallOption) (*Metrics, error)
+	UpdateMetric(ctx context.Context, in *MetricUpdateRequest, opts ...grpc.CallOption) (*Metric, error)
+	UpdateMetrics(ctx context.Context, in *MetricsUpdateRequest, opts ...grpc.CallOption) (*Metrics, error)
 	GetAllMetrics(ctx context.Context, in *empty.Empty, opts ...grpc.CallOption) (*Metrics, error)
 }
 
@@ -53,7 +53,7 @@ func (c *metricsServiceClient) GetMetric(ctx context.Context, in *MetricRequest,
 	return out, nil
 }
 
-func (c *metricsServiceClient) UpdateMetric(ctx context.Context, in *UpdateRequest, opts ...grpc.CallOption) (*Metric, error) {
+func (c *metricsServiceClient) UpdateMetric(ctx context.Context, in *MetricUpdateRequest, opts ...grpc.CallOption) (*Metric, error) {
 	out := new(Metric)
 	err := c.cc.Invoke(ctx, MetricsService_UpdateMetric_FullMethodName, in, out, opts...)
 	if err != nil {
@@ -62,7 +62,7 @@ func (c *metricsServiceClient) UpdateMetric(ctx context.Context, in *UpdateReque
 	return out, nil
 }
 
-func (c *metricsServiceClient) UpdateMetrics(ctx context.Context, in *UpdateRequest, opts ...grpc.CallOption) (*Metrics, error) {
+func (c *metricsServiceClient) UpdateMetrics(ctx context.Context, in *MetricsUpdateRequest, opts ...grpc.CallOption) (*Metrics, error) {
 	out := new(Metrics)
 	err := c.cc.Invoke(ctx, MetricsService_UpdateMetrics_FullMethodName, in, out, opts...)
 	if err != nil {
@@ -85,8 +85,8 @@ func (c *metricsServiceClient) GetAllMetrics(ctx context.Context, in *empty.Empt
 // for forward compatibility
 type MetricsServiceServer interface {
 	GetMetric(context.Context, *MetricRequest) (*Metric, error)
-	UpdateMetric(context.Context, *UpdateRequest) (*Metric, error)
-	UpdateMetrics(context.Context, *UpdateRequest) (*Metrics, error)
+	UpdateMetric(context.Context, *MetricUpdateRequest) (*Metric, error)
+	UpdateMetrics(context.Context, *MetricsUpdateRequest) (*Metrics, error)
 	GetAllMetrics(context.Context, *empty.Empty) (*Metrics, error)
 	mustEmbedUnimplementedMetricsServiceServer()
 }
@@ -98,10 +98,10 @@ type UnimplementedMetricsServiceServer struct {
 func (UnimplementedMetricsServiceServer) GetMetric(context.Context, *MetricRequest) (*Metric, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetMetric not implemented")
 }
-func (UnimplementedMetricsServiceServer) UpdateMetric(context.Context, *UpdateRequest) (*Metric, error) {
+func (UnimplementedMetricsServiceServer) UpdateMetric(context.Context, *MetricUpdateRequest) (*Metric, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method UpdateMetric not implemented")
 }
-func (UnimplementedMetricsServiceServer) UpdateMetrics(context.Context, *UpdateRequest) (*Metrics, error) {
+func (UnimplementedMetricsServiceServer) UpdateMetrics(context.Context, *MetricsUpdateRequest) (*Metrics, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method UpdateMetrics not implemented")
 }
 func (UnimplementedMetricsServiceServer) GetAllMetrics(context.Context, *empty.Empty) (*Metrics, error) {
@@ -139,7 +139,7 @@ func _MetricsService_GetMetric_Handler(srv interface{}, ctx context.Context, dec
 }
 
 func _MetricsService_UpdateMetric_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(UpdateRequest)
+	in := new(MetricUpdateRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -151,13 +151,13 @@ func _MetricsService_UpdateMetric_Handler(srv interface{}, ctx context.Context, 
 		FullMethod: MetricsService_UpdateMetric_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MetricsServiceServer).UpdateMetric(ctx, req.(*UpdateRequest))
+		return srv.(MetricsServiceServer).UpdateMetric(ctx, req.(*MetricUpdateRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
 func _MetricsService_UpdateMetrics_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(UpdateRequest)
+	in := new(MetricsUpdateRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -169,7 +169,7 @@ func _MetricsService_UpdateMetrics_Handler(srv interface{}, ctx context.Context,
 		FullMethod: MetricsService_UpdateMetrics_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MetricsServiceServer).UpdateMetrics(ctx, req.(*UpdateRequest))
+		return srv.(MetricsServiceServer).UpdateMetrics(ctx, req.(*MetricsUpdateRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }

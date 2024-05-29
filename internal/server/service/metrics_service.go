@@ -10,7 +10,7 @@ type MetricsService interface {
 	GetMetric(name string, mtype string) (metrics.Metric, ServiceError)
 	UpdateMetric(mtype, mname, mvalue string) (metrics.Metric, ServiceError)
 	GetAllMetrics() ([]metrics.Metric, ServiceError)
-	UpdateMetrics(metrics []metrics.Metric) ServiceError
+	UpdateMetrics(metrics []metrics.Metric) ([]metrics.Metric, ServiceError)
 	HealthCheck() error
 }
 
@@ -107,11 +107,11 @@ func (s *CommonMetricsService) GetAllMetrics() ([]metrics.Metric, ServiceError) 
 	return repoMetrics, nil
 }
 
-func (s *CommonMetricsService) UpdateMetrics(metrics []metrics.Metric) ServiceError {
-	err := s.registry.AddMetricsBulk(metrics)
+func (s *CommonMetricsService) UpdateMetrics(metrics []metrics.Metric) ([]metrics.Metric, ServiceError) {
+	res, err := s.registry.AddMetricsBulk(metrics)
 	if err != nil {
-		return MakeServiceError(s.errorToStatus(err), err)
+		return nil, MakeServiceError(s.errorToStatus(err), err)
 	}
 
-	return nil
+	return res, nil
 }

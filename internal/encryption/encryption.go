@@ -10,12 +10,16 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"os"
+
+	"google.golang.org/grpc/credentials"
 )
 
 const encKeyLen = 8
@@ -304,4 +308,53 @@ func DecryptRequestBody(body *bytes.Buffer, key *rsa.PrivateKey) (*bytes.Buffer,
 	}
 
 	return bytes.NewBuffer(decryptedData), nil
+}
+
+func setupTLS(caPath, pKeyPath, certPath string) (myCert *tls.Certificate, caCert []byte, err error) {
+	cert, err := tls.LoadX509KeyPair(certPath, pKeyPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to load server certificate. CertPath: %v, KeyPath: %v: %w", certPath, pKeyPath, err)
+	}
+
+	caCert, err = os.ReadFile(caPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to load CA certificate. CertPath: %v: %w", caPath, err)
+	}
+
+	return &cert, caCert, nil
+}
+
+func SetupClientTLS(caPath, pKeyPath, certPath string) (credentials.TransportCredentials, error) {
+	myCert, caCert, err := setupTLS(caPath, pKeyPath, certPath)
+	if err != nil {
+		return nil, err
+	}
+
+	caCertPool := x509.NewCertPool()
+	caCertPool.AppendCertsFromPEM(caCert)
+
+	creds := credentials.NewTLS(&tls.Config{
+		Certificates: []tls.Certificate{*myCert},
+		RootCAs:      caCertPool,
+	})
+
+	return creds, nil
+}
+
+func SetupServerTLS(caPath, pKeyPath, certPath string) (credentials.TransportCredentials, error) {
+	myCert, caCert, err := setupTLS(caPath, pKeyPath, certPath)
+	if err != nil {
+		return nil, err
+	}
+
+	caCertPool := x509.NewCertPool()
+	caCertPool.AppendCertsFromPEM(caCert)
+
+	creds := credentials.NewTLS(&tls.Config{
+		Certificates: []tls.Certificate{*myCert},
+		ClientCAs:    caCertPool,
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+	})
+
+	return creds, nil
 }

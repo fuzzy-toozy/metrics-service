@@ -13,7 +13,7 @@ import (
 	"github.com/beevik/guid"
 	"github.com/fuzzy-toozy/metrics-service/internal/log"
 	"github.com/fuzzy-toozy/metrics-service/internal/metrics"
-	"github.com/fuzzy-toozy/metrics-service/internal/server/handlers"
+	"github.com/fuzzy-toozy/metrics-service/internal/server/handlers/mhttp"
 	"github.com/fuzzy-toozy/metrics-service/internal/server/service"
 	"github.com/fuzzy-toozy/metrics-service/internal/server/storage"
 )
@@ -137,11 +137,11 @@ func newRewindHandler(h http.Handler, url string, method string, contentType str
 
 func BenchmarkHandlers(b *testing.B) {
 	const metricsNum = 100
-
-	registry := storage.NewCommonMetricsRepository()
-	h := handlers.NewMetricRegistryHandler(service.NewCommonMetricsServiceHTTP(registry), log.NewDevZapLogger(),
-		handlers.MetricURLInfo{Type: "mtype", Name: "mname", Value: "mval"}, nil)
-	serverHandler := handlers.SetupRouting(h)
+	logger := log.NewDevZapLogger()
+	registry := storage.NewCommonMetricsRepository(nil, logger)
+	h := mhttp.NewMetricRegistryHandler(service.NewCommonMetricsServiceHTTP(registry), log.NewDevZapLogger(),
+		mhttp.MetricURLInfo{Type: "mtype", Name: "mname", Value: "mval"})
+	serverHandler := mhttp.SetupRouting(h)
 
 	randomMetrics := make([]metrics.Metric, 0, metricsNum)
 	jsonBulkHandlers := make([]*rewindHandler, metricsNum)

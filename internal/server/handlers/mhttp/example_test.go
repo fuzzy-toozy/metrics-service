@@ -1,4 +1,4 @@
-package handlers
+package mhttp
 
 import (
 	"bytes"
@@ -22,12 +22,12 @@ var serverApp *http.Server
 
 func setupServer() error {
 	logger := log.NewDevZapLogger()
-	h := NewMetricRegistryHandler(service.NewCommonMetricsService(storage.NewCommonMetricsRepository(), errtypes.ErrorToStatusHTTP),
+	h := NewMetricRegistryHandler(service.NewCommonMetricsService(storage.NewCommonMetricsRepository(nil, logger), errtypes.ErrorToStatusHTTP),
 		logger, MetricURLInfo{
 			Name:  "metricName",
 			Value: "metricValue",
 			Type:  "metricType",
-		}, nil)
+		})
 
 	handler := SetupRouting(h)
 

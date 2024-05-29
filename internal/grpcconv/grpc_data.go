@@ -30,3 +30,23 @@ func GRPCToMetric(m *pb.Metric) metrics.Metric {
 
 	return mM
 }
+
+func MetricsToGRPC(metricsData []metrics.Metric) []*pb.Metric {
+	res := make([]*pb.Metric, len(metricsData))
+
+	for i, m := range metricsData {
+		res[i] = MetricToGRPC(m)
+	}
+
+	return res
+}
+
+func GRPCToMetrics(metricsData []*pb.Metric) []metrics.Metric {
+	res := make([]metrics.Metric, len(metricsData))
+
+	for i, m := range metricsData {
+		res[i] = GRPCToMetric(m)
+	}
+
+	return res
+}

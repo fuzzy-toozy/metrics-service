@@ -14,6 +14,7 @@ import (
 	logging "github.com/fuzzy-toozy/metrics-service/internal/log"
 	"github.com/fuzzy-toozy/metrics-service/internal/server/config"
 	"github.com/fuzzy-toozy/metrics-service/internal/server/storage"
+	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -25,7 +26,6 @@ type MetricsServer interface {
 type Server struct {
 	metricsServer     MetricsServer
 	asyncStorageSaver *storage.PeriodicSaver
-	storageSaver      storage.StorageSaver
 	metricsStorage    storage.Repository
 	config            *config.Config
 	logger            logging.Logger
@@ -33,7 +33,7 @@ type Server struct {
 	stop              context.CancelFunc
 }
 
-func NewServer(logger logging.Logger) (*Server, error) {
+func NewServer(logger *zap.SugaredLogger) (*Server, error) {
 	s := Server{}
 	ctx, cancel := context.WithCancel(context.Background())
 	s.stopCtx = ctx
@@ -52,8 +52,18 @@ func NewServer(logger logging.Logger) (*Server, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to create metrics storage: %w", err)
 		}
-	} else {
-		s.metricsStorage = storage.NewCommonMetricsRepository()
+	}
+
+	if len(config.StoreFilePath) > 0 && !config.DatabaseConfig.UseDatabase {
+		fileSaver := storage.NewFileSaver(config.StoreFilePath, logger)
+		if config.StoreInterval.D > 0 {
+			s.metricsStorage = storage.NewCommonMetricsRepository(nil, logger)
+			s.asyncStorageSaver = storage.NewPeriodicSaver(config.StoreInterval.D, logger, fileSaver, s.metricsStorage)
+			logger.Infof("Async persistent storage saver is started")
+		} else {
+			s.metricsStorage = storage.NewCommonMetricsRepository(fileSaver, logger)
+			logger.Infof("Persistent storage will be updated synchronously")
+		}
 	}
 
 	if config.RestoreData && !config.DatabaseConfig.UseDatabase {
@@ -69,28 +79,20 @@ func NewServer(logger logging.Logger) (*Server, error) {
 		}
 	}
 
-	if len(config.StoreFilePath) > 0 && !config.DatabaseConfig.UseDatabase {
-		fileSaver := storage.NewFileSaver(s.metricsStorage, config.StoreFilePath, logger)
-		if config.StoreInterval.D > 0 {
-			s.asyncStorageSaver = storage.NewPeriodicSaver(config.StoreInterval.D, logger, fileSaver)
-			s.asyncStorageSaver.Run()
-			logger.Infof("Async persistent storage saver is started")
-		} else {
-			s.storageSaver = fileSaver
-			logger.Infof("Persistent storage will be updated synchronously")
-		}
-	}
-
 	if config.WorkMode == common.ModeGRPC {
-		s.metricsServer, err = NewServerGRPC(config, logger, s.metricsStorage, s.storageSaver)
+		s.metricsServer, err = NewServerGRPC(config, logger.Desugar(), s.metricsStorage)
 	} else if config.WorkMode == common.ModeHTTP {
-		s.metricsServer, err = NewServerHTTP(config, logger, s.metricsStorage, s.storageSaver)
+		s.metricsServer, err = NewServerHTTP(config, logger, s.metricsStorage)
 	} else {
 		err = fmt.Errorf("unknown work mode: %v", config.WorkMode)
 	}
 
 	if err != nil {
 		return nil, err
+	}
+
+	if s.asyncStorageSaver != nil {
+		s.asyncStorageSaver.Run()
 	}
 
 	return &s, nil

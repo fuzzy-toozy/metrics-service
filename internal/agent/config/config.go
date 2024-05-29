@@ -33,8 +33,12 @@ type Config struct {
 	ReportBulkEndpoint string `json:"-"`
 	// CompressAlgo name of compression algorithm to use (only gzip supported atm).
 	CompressAlgo string `json:"compression_algo"`
-	// EncKeyPath assymetic encryption public key path.
+	// EncKeyPath assymetic encryption key path.
 	EncKeyPath string `json:"crypto_key"`
+	// CACertPath path to CA certificate.
+	CACertPath string `json:"ca_cert"`
+	// AgentSertPath path to agent certificate.
+	AgentCertPath string `json:"agent_cert"`
 	// HostIPAddr ip address of current host
 	HostIPAddr string `json:"-"`
 	// EncKey assymetic encryption public key.
@@ -143,6 +147,8 @@ func BuildConfig() (*Config, error) {
 	var (
 		secretKey      string
 		encKeyPath     string
+		agentCertPath  string
+		caCertPath     string
 		serverAddress  string
 		reportURL      string
 		reportBulkURL  string
@@ -165,6 +171,9 @@ func BuildConfig() (*Config, error) {
 	flag.StringVar(&configFilePath, "config", "", "Config file path")
 	flag.StringVar(&clientType, "client", "", "Client type. HTTP or GRPC")
 
+	flag.StringVar(&agentCertPath, "agent-cert", "", "Agent certificate path")
+	flag.StringVar(&caCertPath, "ca-cert", "", "CA ceritficate path")
+
 	flag.StringVar(&reportBulkURL, "ub", "", "Server endpoint path")
 	flag.UintVar(&rateLimit, "l", 0, "Max concurent connections")
 
@@ -181,6 +190,14 @@ func BuildConfig() (*Config, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse config file: %w", err)
 		}
+	}
+
+	if len(caCertPath) > 0 {
+		c.CACertPath = caCertPath
+	}
+
+	if len(agentCertPath) > 0 {
+		c.AgentCertPath = agentCertPath
 	}
 
 	if len(secretKey) > 0 {
@@ -227,13 +244,6 @@ func BuildConfig() (*Config, error) {
 	c.ReportEndpoint = getEndpoint(c.ServerAddress, c.ReportURL)
 	c.ReportBulkEndpoint = getEndpoint(c.ServerAddress, c.ReportBulkURL)
 
-	if len(c.EncKeyPath) > 0 {
-		c.EncPublicKey, err = parseEncKey(c.EncKeyPath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse public key: %w", err)
-		}
-	}
-
 	addr, err := getOutboundIP(c.ServerAddress)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get host ip address: %w", err)
@@ -243,6 +253,13 @@ func BuildConfig() (*Config, error) {
 
 	if len(clientType) != 0 {
 		c.ClientType = strings.ToLower(clientType)
+	}
+
+	if len(c.EncKeyPath) > 0 && c.ClientType != common.ModeGRPC {
+		c.EncPublicKey, err = parseEncKey(c.EncKeyPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load public key: %w", err)
+		}
 	}
 
 	if c.ClientType != common.ModeHTTP && c.ClientType != common.ModeGRPC {
@@ -257,6 +274,8 @@ func (c *Config) parseEnvVariables() error {
 		ServerAddress  string `env:"ADDRESS"`
 		SecretKey      string `env:"KEY"`
 		EncKeyPath     string `env:"CRYPTO_KEY"`
+		CACertPath     string `env:"CA_CERT"`
+		AgentCertPath  string `env:"AGENT_CERT"`
 		ReportInterval int    `env:"REPORT_INTERVAL"`
 		PollInterval   int    `env:"POLL_INTERVAL"`
 		RateLimit      uint   `env:"RATE_LIMIT"`
@@ -265,6 +284,14 @@ func (c *Config) parseEnvVariables() error {
 	err := env.Parse(&ecfg)
 	if err != nil {
 		return err
+	}
+
+	if len(ecfg.CACertPath) > 0 {
+		c.CACertPath = ecfg.CACertPath
+	}
+
+	if len(ecfg.AgentCertPath) > 0 {
+		c.AgentCertPath = ecfg.AgentCertPath
 	}
 
 	if len(ecfg.SecretKey) > 0 {

@@ -1,6 +1,8 @@
 package log
 
-import "go.uber.org/zap"
+import (
+	"go.uber.org/zap"
+)
 
 type Logger interface {
 	Warnf(template string, args ...interface{})

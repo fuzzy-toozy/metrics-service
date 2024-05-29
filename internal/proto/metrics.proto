@@ -22,13 +22,17 @@ message Metrics {
     repeated Metric metrics = 1;
 }
 
-message UpdateRequest {
-    bytes data = 1;
+message MetricUpdateRequest {
+    Metric metric = 1;
+}
+
+message MetricsUpdateRequest {
+    repeated Metric metrics = 1;
 }
 
 service MetricsService {
     rpc GetMetric(MetricRequest) returns (Metric);
-    rpc UpdateMetric(UpdateRequest) returns (Metric);
-    rpc UpdateMetrics(UpdateRequest) returns (Metrics);
+    rpc UpdateMetric(MetricUpdateRequest) returns (Metric);
+    rpc UpdateMetrics(MetricsUpdateRequest) returns (Metrics);
     rpc GetAllMetrics(google.protobuf.Empty) returns (Metrics);
 }
