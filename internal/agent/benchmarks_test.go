@@ -12,6 +12,7 @@ import (
 	"github.com/fuzzy-toozy/metrics-service/internal/agent/config"
 	"github.com/fuzzy-toozy/metrics-service/internal/agent/monitor"
 	"github.com/fuzzy-toozy/metrics-service/internal/agent/monitor/storage"
+	"github.com/fuzzy-toozy/metrics-service/internal/agent/worker"
 	"github.com/fuzzy-toozy/metrics-service/internal/log"
 	"github.com/fuzzy-toozy/metrics-service/internal/metrics"
 )
@@ -26,6 +27,9 @@ func (c DummyClient) Send(r *http.Request) (*http.Response, error) {
 	}, nil
 }
 
+func (c DummyClient) SetTransport(t http.RoundTripper) {
+}
+
 func BenchmarkReportMetrics(b *testing.B) {
 	logger := log.NewDevZapLogger()
 	os.Args = os.Args[0:1]
@@ -37,7 +41,7 @@ func BenchmarkReportMetrics(b *testing.B) {
 
 	dummyClient := DummyClient{}
 
-	w := newWorker(c, logger, dummyClient)
+	w := worker.NewWorkerHTTP(c, logger, dummyClient)
 
 	m := monitor.NewMetricsMonitor(storage.NewCommonMetricsStorage(), log.NewDevZapLogger())
 
@@ -49,12 +53,13 @@ func BenchmarkReportMetrics(b *testing.B) {
 
 	allMetrics := m.GetMetricsStorage().GetAllMetrics()
 
-	rData := reportData{}
-	rData.data = allMetrics
-	rData.dType = tBULK
+	rData := worker.ReportData{
+		Data:  allMetrics,
+		DType: worker.BULK,
+	}
 
 	for i := 0; i < b.N; i++ {
-		err = w.reportDataJSON(rData)
+		err = w.ReportData(rData)
 	}
 	runtime.KeepAlive(err)
 }
@@ -70,14 +75,15 @@ func BenchmarkReportMetric(b *testing.B) {
 
 	dummyClient := DummyClient{}
 
-	w := newWorker(c, logger, dummyClient)
+	w := worker.NewWorkerHTTP(c, logger, dummyClient)
 
-	rData := reportData{}
-	rData.data = storage.StorageMetric(metrics.NewCounterMetric("metric", 1000))
-	rData.dType = tSINGLE
+	rData := worker.ReportData{
+		Data:  storage.StorageMetric(metrics.NewCounterMetric("metric", 1000)),
+		DType: worker.SINGLE,
+	}
 
 	for i := 0; i < b.N; i++ {
-		err = w.reportDataJSON(rData)
+		err = w.ReportData(rData)
 	}
 	runtime.KeepAlive(err)
 }

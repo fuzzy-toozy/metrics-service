@@ -10,17 +10,22 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/fuzzy-toozy/metrics-service/internal/common"
 	logging "github.com/fuzzy-toozy/metrics-service/internal/log"
 	"github.com/fuzzy-toozy/metrics-service/internal/server/config"
-	"github.com/fuzzy-toozy/metrics-service/internal/server/handlers"
 	"github.com/fuzzy-toozy/metrics-service/internal/server/storage"
+	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
+type MetricsServer interface {
+	Run() error
+	Stop(context.Context) error
+}
+
 type Server struct {
-	httpServer        *http.Server
+	metricsServer     MetricsServer
 	asyncStorageSaver *storage.PeriodicSaver
-	storageSaver      storage.StorageSaver
 	metricsStorage    storage.Repository
 	config            *config.Config
 	logger            logging.Logger
@@ -28,7 +33,7 @@ type Server struct {
 	stop              context.CancelFunc
 }
 
-func NewServer(logger logging.Logger) (*Server, error) {
+func NewServer(logger *zap.SugaredLogger) (*Server, error) {
 	s := Server{}
 	ctx, cancel := context.WithCancel(context.Background())
 	s.stopCtx = ctx
@@ -47,13 +52,18 @@ func NewServer(logger logging.Logger) (*Server, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to create metrics storage: %w", err)
 		}
-	} else {
-		s.metricsStorage = storage.NewCommonMetricsRepository()
 	}
 
-	registryHandler, err := handlers.NewDefaultMetricRegistryHandler(logger, s.metricsStorage, s.storageSaver, config.DatabaseConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create server: %w", err)
+	if len(config.StoreFilePath) > 0 && !config.DatabaseConfig.UseDatabase {
+		fileSaver := storage.NewFileSaver(config.StoreFilePath, logger)
+		if config.StoreInterval.D > 0 {
+			s.metricsStorage = storage.NewCommonMetricsRepository(nil, logger)
+			s.asyncStorageSaver = storage.NewPeriodicSaver(config.StoreInterval.D, logger, fileSaver, s.metricsStorage)
+			logger.Infof("Async persistent storage saver is started")
+		} else {
+			s.metricsStorage = storage.NewCommonMetricsRepository(fileSaver, logger)
+			logger.Infof("Persistent storage will be updated synchronously")
+		}
 	}
 
 	if config.RestoreData && !config.DatabaseConfig.UseDatabase {
@@ -69,34 +79,21 @@ func NewServer(logger logging.Logger) (*Server, error) {
 		}
 	}
 
-	if len(config.StoreFilePath) > 0 && !config.DatabaseConfig.UseDatabase {
-		fileSaver := storage.NewFileSaver(s.metricsStorage, config.StoreFilePath, logger)
-		if config.StoreInterval.D > 0 {
-			s.asyncStorageSaver = storage.NewPeriodicSaver(config.StoreInterval.D, logger, fileSaver)
-			s.asyncStorageSaver.Run()
-			logger.Infof("Async persistent storage saver is started")
-		} else {
-			s.storageSaver = fileSaver
-			logger.Infof("Persistent storage will be updated synchronously")
-		}
+	if config.WorkMode == common.ModeGRPC {
+		s.metricsServer, err = NewServerGRPC(config, logger.Desugar(), s.metricsStorage)
+	} else if config.WorkMode == common.ModeHTTP {
+		s.metricsServer, err = NewServerHTTP(config, logger, s.metricsStorage)
+	} else {
+		err = fmt.Errorf("unknown work mode: %v", config.WorkMode)
 	}
 
-	serverHandler := handlers.SetupRouting(registryHandler)
-
-	if s.config.SecretKey != nil {
-		serverHandler = handlers.WithSignatureCheck(serverHandler, logger, config.SecretKey)
+	if err != nil {
+		return nil, err
 	}
 
-	if s.config.EncryptPrivKey != nil {
-		serverHandler = handlers.WithDecryption(serverHandler, s.config.EncryptPrivKey, logger)
+	if s.asyncStorageSaver != nil {
+		s.asyncStorageSaver.Run()
 	}
-
-	serverHandler = handlers.WithCompression(serverHandler, logger)
-
-	serverHandler = handlers.WithBodySizeLimit(serverHandler, config.MaxBodySize)
-	serverHandler = handlers.WithLogging(serverHandler, logger)
-
-	s.httpServer = NewDefaultHTTPServer(*config, logger, serverHandler)
 
 	return &s, nil
 }
@@ -105,11 +102,11 @@ func (s *Server) Run() error {
 	s.config.Print(s.logger)
 
 	start := func() error {
-		return s.httpServer.ListenAndServe()
+		return s.metricsServer.Run()
 	}
 
 	stop := func() error {
-		err := s.httpServer.Shutdown(context.Background())
+		err := s.metricsServer.Stop(context.Background())
 		if err != nil {
 			s.logger.Errorf("server shutdown failed: %w", err)
 		}

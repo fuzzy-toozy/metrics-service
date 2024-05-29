@@ -9,8 +9,8 @@ import (
 
 	"github.com/fuzzy-toozy/metrics-service/internal/log"
 	"github.com/fuzzy-toozy/metrics-service/internal/metrics"
-	"github.com/fuzzy-toozy/metrics-service/internal/server/config"
-	"github.com/fuzzy-toozy/metrics-service/internal/server/handlers"
+	"github.com/fuzzy-toozy/metrics-service/internal/server/handlers/mhttp"
+	"github.com/fuzzy-toozy/metrics-service/internal/server/service"
 	"github.com/fuzzy-toozy/metrics-service/internal/server/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -122,12 +122,12 @@ func TestMetrics(t *testing.T) {
 		},
 	}
 
-	registry := storage.NewCommonMetricsRepository()
+	registry := storage.NewCommonMetricsRepository(nil, log.NewDummyLogger())
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := handlers.NewMetricRegistryHandler(registry, log.NewDummyLogger(),
-				handlers.MetricURLInfo{Type: "mtype", Name: "mname", Value: "mval"}, nil, config.DBConfig{})
-			r := handlers.SetupRouting(h)
+			h := mhttp.NewMetricRegistryHandler(service.NewCommonMetricsServiceHTTP(registry), log.NewDummyLogger(),
+				mhttp.MetricURLInfo{Type: "mtype", Name: "mname", Value: "mval"})
+			r := mhttp.SetupRouting(h)
 			r.ServeHTTP(tt.args.w, tt.args.r)
 			resp := tt.args.w.(*httptest.ResponseRecorder)
 			require.Equal(t, tt.wantCode, resp.Code)

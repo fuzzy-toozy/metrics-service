@@ -1,4 +1,4 @@
-package handlers
+package mhttp
 
 import (
 	"bytes"
@@ -10,7 +10,7 @@ import (
 	logging "github.com/fuzzy-toozy/metrics-service/internal/log"
 )
 
-func WithDecryption(h http.Handler, privKey *rsa.PrivateKey, log logging.Logger) http.Handler {
+func WithDecryption(h http.Handler, log logging.Logger, privKey *rsa.PrivateKey) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.ContentLength == 0 {
 			h.ServeHTTP(w, r)

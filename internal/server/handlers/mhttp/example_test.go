@@ -1,4 +1,4 @@
-package handlers
+package mhttp
 
 import (
 	"bytes"
@@ -12,7 +12,8 @@ import (
 	"time"
 
 	"github.com/fuzzy-toozy/metrics-service/internal/log"
-	"github.com/fuzzy-toozy/metrics-service/internal/server/config"
+	"github.com/fuzzy-toozy/metrics-service/internal/server/errtypes"
+	"github.com/fuzzy-toozy/metrics-service/internal/server/service"
 	"github.com/fuzzy-toozy/metrics-service/internal/server/storage"
 )
 
@@ -21,12 +22,12 @@ var serverApp *http.Server
 
 func setupServer() error {
 	logger := log.NewDevZapLogger()
-	h := NewMetricRegistryHandler(storage.NewCommonMetricsRepository(),
+	h := NewMetricRegistryHandler(service.NewCommonMetricsService(storage.NewCommonMetricsRepository(nil, logger), errtypes.ErrorToStatusHTTP),
 		logger, MetricURLInfo{
 			Name:  "metricName",
 			Value: "metricValue",
 			Type:  "metricType",
-		}, nil, config.DBConfig{})
+		})
 
 	handler := SetupRouting(h)
 

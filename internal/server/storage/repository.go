@@ -7,6 +7,7 @@ import (
 	"io"
 	"sync"
 
+	logging "github.com/fuzzy-toozy/metrics-service/internal/log"
 	"github.com/fuzzy-toozy/metrics-service/internal/metrics"
 	"github.com/fuzzy-toozy/metrics-service/internal/server/errtypes"
 )
@@ -16,7 +17,7 @@ type Repository interface {
 	Delete(key string) error
 	Get(key string, mtype string) (metrics.Metric, error)
 	GetAll() ([]metrics.Metric, error)
-	AddMetricsBulk(metrics []metrics.Metric) error
+	AddMetricsBulk(metrics []metrics.Metric) ([]metrics.Metric, error)
 	MarshalJSON() ([]byte, error)
 	UnmarshalJSON(data []byte) error
 	HealthCheck() error
@@ -26,13 +27,28 @@ type Repository interface {
 }
 
 type CommonMetricsRepository struct {
-	storage map[string]metrics.Metric
-	lock    sync.RWMutex
+	storage      map[string]metrics.Metric
+	storageSaver io.Writer
+	log          logging.Logger
+	lock         sync.RWMutex
 }
 
-func NewCommonMetricsRepository() *CommonMetricsRepository {
-	r := CommonMetricsRepository{storage: make(map[string]metrics.Metric)}
-	return &r
+func NewCommonMetricsRepository(storageSaver io.Writer, log logging.Logger) *CommonMetricsRepository {
+	return &CommonMetricsRepository{storage: make(map[string]metrics.Metric),
+		log:          log,
+		storageSaver: storageSaver}
+}
+
+func (r *CommonMetricsRepository) saveData() {
+	if r.storageSaver == nil {
+		return
+	}
+
+	err := r.Save(r.storageSaver)
+
+	if err != nil {
+		r.log.Errorf("Failed to save metrics to persistent storage: %v", err)
+	}
 }
 
 func (r *CommonMetricsRepository) HealthCheck() error {
@@ -54,28 +70,34 @@ func (r *CommonMetricsRepository) Close() error {
 	return nil
 }
 
-func (r *CommonMetricsRepository) AddMetricsBulk(metrics []metrics.Metric) error {
-	for i, m := range metrics {
-		val, err := m.GetData()
-		if err != nil {
-			return err
-		}
-		uVal, err := r.AddOrUpdate(m.ID, val, m.MType)
-		if err != nil {
-			return err
-		}
-
-		err = metrics[i].SetData(uVal)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (r *CommonMetricsRepository) AddOrUpdate(key string, val string, mtype string) (string, error) {
+func (r *CommonMetricsRepository) AddMetricsBulk(metricsData []metrics.Metric) ([]metrics.Metric, error) {
 	r.lock.Lock()
 	defer r.lock.Unlock()
+	res := make([]metrics.Metric, len(metricsData))
+	for i, m := range metricsData {
+		val, err := m.GetData()
+		if err != nil {
+			return nil, err
+		}
+		uVal, err := r.addOrUpdateUnsafe(m.ID, val, m.MType)
+		if err != nil {
+			return nil, err
+		}
+
+		updatedMetric, err := metrics.NewMetric(m.ID, uVal, m.MType)
+		if err != nil {
+			return nil, err
+		}
+
+		res[i] = updatedMetric
+	}
+
+	r.saveData()
+
+	return res, nil
+}
+
+func (r *CommonMetricsRepository) addOrUpdateUnsafe(key string, val string, mtype string) (string, error) {
 	if !metrics.IsValidMetricType(mtype) {
 		return "", errtypes.MakeBadDataError(fmt.Errorf("invalid metric type %v", mtype))
 	}
@@ -106,6 +128,18 @@ func (r *CommonMetricsRepository) AddOrUpdate(key string, val string, mtype stri
 	}
 
 	return val, nil
+}
+
+func (r *CommonMetricsRepository) AddOrUpdate(key string, val string, mtype string) (string, error) {
+	r.lock.Lock()
+	defer r.lock.Unlock()
+	res, err := r.addOrUpdateUnsafe(key, val, mtype)
+
+	if err != nil {
+		r.saveData()
+	}
+
+	return res, err
 }
 
 func (r *CommonMetricsRepository) MarshalJSON() ([]byte, error) {
@@ -139,6 +173,8 @@ func (r *CommonMetricsRepository) Delete(key string) error {
 	r.lock.Lock()
 	defer r.lock.Unlock()
 	delete(r.storage, key)
+	r.saveData()
+
 	return nil
 }
 

@@ -145,7 +145,8 @@ func (r *PGMetricRepository) getCounterIncDelta(ctx context.Context, db RowQuery
 	return strconv.FormatInt(delta, 10), nil
 }
 
-func (r *PGMetricRepository) AddMetricsBulk(metricsData []metrics.Metric) error {
+func (r *PGMetricRepository) AddMetricsBulk(metricsData []metrics.Metric) ([]metrics.Metric, error) {
+	res := make([]metrics.Metric, len(metricsData))
 	work := func() error {
 		tx, err := r.db.Begin()
 
@@ -176,8 +177,7 @@ func (r *PGMetricRepository) AddMetricsBulk(metricsData []metrics.Metric) error 
 			}
 		}()
 
-		for i := range metricsData {
-			m := &metricsData[i]
+		for i, m := range metricsData {
 			var val string
 			val, err = m.GetData()
 			if err != nil {
@@ -201,6 +201,8 @@ func (r *PGMetricRepository) AddMetricsBulk(metricsData []metrics.Metric) error 
 			if err != nil {
 				return errtypes.MakeServerError(fmt.Errorf("failed to execute query '%v' for metric '%v': %w", r.queryConfig.update, m.ID, err))
 			}
+
+			res[i] = m
 		}
 
 		err = tx.Commit()
@@ -212,7 +214,12 @@ func (r *PGMetricRepository) AddMetricsBulk(metricsData []metrics.Metric) error 
 		return nil
 	}
 
-	return r.retryExecutor.RetryOnError(work)
+	err := r.retryExecutor.RetryOnError(work)
+	if err != nil {
+		return nil, err
+	}
+
+	return res, nil
 }
 
 func (r *PGMetricRepository) AddOrUpdate(key string, val string, mtype string) (string, error) {

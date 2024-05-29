@@ -63,7 +63,7 @@ func Test_Database(t *testing.T) {
 		metricsArr = append(metricsArr, m)
 	}
 
-	err = repo.AddMetricsBulk(metricsArr)
+	_, err = repo.AddMetricsBulk(metricsArr)
 	require.NoError(t, err)
 
 	metricsDB, err := repo.GetAll()

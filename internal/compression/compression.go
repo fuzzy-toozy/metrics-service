@@ -7,6 +7,8 @@ import (
 	"io"
 )
 
+const CompressAlgoKey = "CompressAlgo"
+
 type CompressorFactory func(w io.Writer) (io.WriteCloser, error)
 type DecompressorFactory func(w io.Reader) (io.ReadCloser, error)
 

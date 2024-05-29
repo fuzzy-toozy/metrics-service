@@ -1,4 +1,4 @@
-package handlers
+package mhttp
 
 // Provides middleware to limit request body size.
 

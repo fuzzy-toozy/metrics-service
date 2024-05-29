@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"io"
 	"os"
 	"sync"
 	"time"
@@ -8,26 +9,22 @@ import (
 	logging "github.com/fuzzy-toozy/metrics-service/internal/log"
 )
 
-type StorageSaver interface {
-	Save() error
-}
-
 type PeriodicSaver struct {
-	ticker       *time.Ticker
-	done         chan struct{}
-	storageSaver StorageSaver
-	log          logging.Logger
-	period       time.Duration
-	wg           sync.WaitGroup
+	ticker         *time.Ticker
+	done           chan struct{}
+	storageSaver   io.Writer
+	metricsStorage Repository
+	log            logging.Logger
+	period         time.Duration
+	wg             sync.WaitGroup
 }
 
 type FileSaver struct {
-	metricsStorage Repository
-	logger         logging.Logger
-	fileName       string
+	logger   logging.Logger
+	fileName string
 }
 
-func (s *FileSaver) Save() error {
+func (s *FileSaver) Write(p []byte) (n int, err error) {
 	const perms = 0644
 	f, err := os.OpenFile(s.fileName, os.O_CREATE|os.O_WRONLY, perms)
 	defer func() {
@@ -45,10 +42,10 @@ func (s *FileSaver) Save() error {
 	}()
 
 	if err != nil {
-		return err
+		return 0, err
 	}
 
-	return s.metricsStorage.Save(f)
+	return f.Write(p)
 }
 
 func (s *PeriodicSaver) Run() {
@@ -60,13 +57,13 @@ func (s *PeriodicSaver) Run() {
 		for {
 			select {
 			case <-s.done:
-				err := s.storageSaver.Save()
+				err := s.metricsStorage.Save(s.storageSaver)
 				if err != nil {
 					s.log.Errorf("Saving data before exit failed: %v", err)
 				}
 				break out
 			case <-s.ticker.C:
-				err := s.storageSaver.Save()
+				err := s.metricsStorage.Save(s.storageSaver)
 				if err != nil {
 					s.log.Errorf("Saving data failed: %v", err)
 				}
@@ -80,11 +77,11 @@ func (s *PeriodicSaver) Stop() {
 	s.wg.Wait()
 }
 
-func NewPeriodicSaver(period time.Duration, log logging.Logger, storageSaver StorageSaver) *PeriodicSaver {
-	return &PeriodicSaver{period: period, done: make(chan struct{}), log: log, storageSaver: storageSaver}
+func NewPeriodicSaver(period time.Duration, log logging.Logger, storageSaver io.Writer, metricsStorage Repository) *PeriodicSaver {
+	return &PeriodicSaver{period: period, done: make(chan struct{}), log: log, storageSaver: storageSaver, metricsStorage: metricsStorage}
 }
 
-func NewFileSaver(m Repository, fileName string, log logging.Logger) *FileSaver {
-	s := FileSaver{logger: log, fileName: fileName, metricsStorage: m}
+func NewFileSaver(fileName string, log logging.Logger) *FileSaver {
+	s := FileSaver{logger: log, fileName: fileName}
 	return &s
 }

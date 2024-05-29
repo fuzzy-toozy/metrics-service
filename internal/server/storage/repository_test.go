@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/beevik/guid"
+	"github.com/fuzzy-toozy/metrics-service/internal/log"
 	"github.com/fuzzy-toozy/metrics-service/internal/metrics"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -21,7 +22,7 @@ type MetricTestData struct {
 }
 
 func Test_MetricsRepo(t *testing.T) {
-	repo := NewCommonMetricsRepository()
+	repo := NewCommonMetricsRepository(nil, log.NewDevZapLogger())
 	data := []MetricTestData{
 		{
 			name:              "m1",

@@ -1,4 +1,4 @@
-package handlers
+package mhttp
 
 // Signature checking middleware
 

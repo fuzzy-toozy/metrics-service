@@ -6,11 +6,14 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/caarlos0/env"
+	"github.com/fuzzy-toozy/metrics-service/internal/common"
 	"github.com/fuzzy-toozy/metrics-service/internal/config"
 	"github.com/fuzzy-toozy/metrics-service/internal/encryption"
 	"github.com/fuzzy-toozy/metrics-service/internal/log"
@@ -25,6 +28,16 @@ type Config struct {
 	EncKeyPath string `json:"crypto_key"`
 	// DbConnString database connection string.
 	DBConnString string `json:"database_dsn"`
+	// TrustedSubnet Subnet in CIDR format to accept requests from
+	TrustedSubnet string `json:"trusted_subnet"`
+	// CaCertPath path to CA certificate
+	CaCertPath string
+	// ServerCertPath path to server certificate
+	ServerCertPath string
+	// WorkNode server working mode HTTP/GRPC
+	WorkMode string
+	// TrustedSubnetAddr Parsed subnet to accept requests from
+	TrustedSubnetAddr *net.IPNet `json:"-"`
 	// SecretKey key to validate signature of sent data.
 	SecretKey []byte `json:"signature_key"`
 	// Assymetric encryption private key
@@ -130,6 +143,10 @@ func (c *Config) setDefaultValues() {
 	if c.IdleTimeout.D == 0 {
 		c.IdleTimeout.D = defaultCommonTimeout * time.Second
 	}
+
+	if len(c.WorkMode) == 0 {
+		c.WorkMode = common.ModeHTTP
+	}
 }
 
 // BuildConfig parses command line parameters and environment variables
@@ -138,10 +155,13 @@ func BuildConfig() (*Config, error) {
 	var (
 		dbConnString   string
 		encKeyPath     string
+		caCertPath     string
+		serverCertPath string
 		secretKey      string
 		serverAddress  string
 		storeFilePath  string
 		configFilePath string
+		workMode       string
 		maxBodySize    uint64
 		pingTimeout    config.DurationOption
 		readTimeout    config.DurationOption
@@ -159,10 +179,15 @@ func BuildConfig() (*Config, error) {
 	flag.StringVar(&serverAddress, "a", "", "Address and port to bind server to")
 	flag.StringVar(&storeFilePath, "f", "", "File to store metrics data to")
 	flag.StringVar(&encKeyPath, "crypto-key", "", "Path to private RSA key in PEM format")
+	flag.StringVar(&caCertPath, "ca-cert", "", "Path to CA certificate")
+	flag.StringVar(&serverCertPath, "server-cert", "", "Path to server certificate")
+
 	flag.BoolVar(&c.RestoreData, "r", true, "Restore data from previously stored values")
 	flag.Uint64Var(&maxBodySize, "bs", 0, "Max HTTP body size")
 	flag.StringVar(&configFilePath, "c", "", "Config file path")
 	flag.StringVar(&configFilePath, "config", "", "Config file path")
+	flag.StringVar(&c.TrustedSubnet, "t", "", "Subnet to accept requests from")
+	flag.StringVar(&workMode, "wm", "", "Server work mode HTTP/GRPC")
 
 	flag.Var(&pingTimeout, "ping_timeout", "DB ping timeout and retry timeout")
 	flag.Var(&readTimeout, "read_timeout", "Server read timeout(seconds)")
@@ -227,9 +252,26 @@ func BuildConfig() (*Config, error) {
 		c.StoreInterval = storeInterval
 	}
 
+	if len(workMode) > 0 {
+		c.WorkMode = workMode
+	}
+
+	if len(caCertPath) > 0 {
+		c.CaCertPath = caCertPath
+	}
+
+	if len(serverCertPath) > 0 {
+		c.ServerCertPath = serverCertPath
+	}
+
 	err = c.ParseEnvVariables()
 	if err != nil {
 		return nil, err
+	}
+
+	c.WorkMode = strings.ToLower(c.WorkMode)
+	if c.WorkMode != common.ModeGRPC && c.WorkMode != common.ModeHTTP {
+		return nil, fmt.Errorf("unsuported work mode: %v. Work modes available: %v, %v", c.WorkMode, common.ModeGRPC, common.ModeHTTP)
 	}
 
 	if len(c.DatabaseConfig.ConnString) > 0 {
@@ -242,6 +284,12 @@ func BuildConfig() (*Config, error) {
 			return nil, err
 		}
 	}
+	if len(c.TrustedSubnet) > 0 {
+		_, c.TrustedSubnetAddr, err = net.ParseCIDR(c.TrustedSubnet)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	return &c, nil
 }
@@ -250,13 +298,16 @@ func BuildConfig() (*Config, error) {
 // and builds configuration from parsed data.
 func (c *Config) ParseEnvVariables() error {
 	type EnvConfig struct {
-		ServerAddress string `env:"ADDRESS"`
-		StoreInterval string `env:"STORE_INTERVAL"`
-		StoragePath   string `env:"FILE_STORAGE_PATH"`
-		Restore       string `env:"RESTORE"`
-		DBConnStr     string `env:"DATABASE_DSN"`
-		SecretKey     string `env:"KEY"`
-		EncKeyPath    string `env:"CRYPTO_KEY"`
+		ServerAddress  string `env:"ADDRESS"`
+		StoreInterval  string `env:"STORE_INTERVAL"`
+		StoragePath    string `env:"FILE_STORAGE_PATH"`
+		Restore        string `env:"RESTORE"`
+		DBConnStr      string `env:"DATABASE_DSN"`
+		SecretKey      string `env:"KEY"`
+		EncKeyPath     string `env:"CRYPTO_KEY"`
+		TrustedSubnet  string `env:"TRUSTED_SUBNET"`
+		ServerCertPath string `env:"SERVER_CERT"`
+		CACertPath     string `env:"CA_SERT"`
 	}
 	ecfg := EnvConfig{}
 	err := env.Parse(&ecfg)
@@ -294,6 +345,18 @@ func (c *Config) ParseEnvVariables() error {
 
 	if len(ecfg.SecretKey) > 0 {
 		c.SecretKey = []byte(ecfg.SecretKey)
+	}
+
+	if len(ecfg.TrustedSubnet) > 0 {
+		c.TrustedSubnet = ecfg.TrustedSubnet
+	}
+
+	if len(ecfg.CACertPath) > 0 {
+		c.CaCertPath = ecfg.CACertPath
+	}
+
+	if len(ecfg.ServerCertPath) > 0 {
+		c.ServerCertPath = ecfg.ServerCertPath
 	}
 
 	return nil

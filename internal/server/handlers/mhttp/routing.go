@@ -1,5 +1,5 @@
 // Package handlers Implements various handlers and middlewares for metrics server.
-package handlers
+package mhttp
 
 // Server's routing setup
 

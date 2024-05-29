@@ -6,12 +6,14 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path"
 	"strings"
 	"time"
 
 	"github.com/caarlos0/env"
+	"github.com/fuzzy-toozy/metrics-service/internal/common"
 	"github.com/fuzzy-toozy/metrics-service/internal/config"
 	"github.com/fuzzy-toozy/metrics-service/internal/encryption"
 	"github.com/fuzzy-toozy/metrics-service/internal/log"
@@ -31,8 +33,14 @@ type Config struct {
 	ReportBulkEndpoint string `json:"-"`
 	// CompressAlgo name of compression algorithm to use (only gzip supported atm).
 	CompressAlgo string `json:"compression_algo"`
-	// EncKeyPath assymetic encryption public key path.
+	// EncKeyPath assymetic encryption key path.
 	EncKeyPath string `json:"crypto_key"`
+	// CACertPath path to CA certificate.
+	CACertPath string `json:"ca_cert"`
+	// AgentSertPath path to agent certificate.
+	AgentCertPath string `json:"agent_cert"`
+	// HostIPAddr ip address of current host
+	HostIPAddr string `json:"-"`
 	// EncKey assymetic encryption public key.
 	EncPublicKey *rsa.PublicKey `json:"-"`
 	// SecretKey secret key for signing sent data.
@@ -42,7 +50,8 @@ type Config struct {
 	// ReportInterval interval for reporting metrics to server.
 	ReportInterval config.DurationOption `json:"report_interval"`
 	// RateLimit max amount of concurrent connections to server.
-	RateLimit uint `json:"concurrent_connections"`
+	RateLimit  uint   `json:"concurrent_connections"`
+	ClientType string `json:"client_type"`
 }
 
 func getEndpoint(address, url string) string {
@@ -98,6 +107,7 @@ func (c *Config) setDefaultValues() {
 	const defaultReportBulkURL = "/updates"
 	const defaultServerAddress = "localhost:8080"
 	const defaultCompressAlgo = "gzip"
+	const defaultClientType = "http"
 
 	if c.RateLimit == 0 {
 		c.RateLimit = defaultConcurentConnections
@@ -126,6 +136,10 @@ func (c *Config) setDefaultValues() {
 	if len(c.CompressAlgo) == 0 {
 		c.CompressAlgo = defaultCompressAlgo
 	}
+
+	if len(c.ClientType) == 0 {
+		c.ClientType = defaultClientType
+	}
 }
 
 // BuildConfig parses environment varialbes, command line parameters and builds agent's config.
@@ -133,10 +147,13 @@ func BuildConfig() (*Config, error) {
 	var (
 		secretKey      string
 		encKeyPath     string
+		agentCertPath  string
+		caCertPath     string
 		serverAddress  string
 		reportURL      string
 		reportBulkURL  string
 		configFilePath string
+		clientType     string
 		rateLimit      uint
 		pollInterval   config.DurationOption
 		reportInterval config.DurationOption
@@ -152,6 +169,10 @@ func BuildConfig() (*Config, error) {
 	flag.StringVar(&reportURL, "u", "", "Server endpoint path")
 	flag.StringVar(&configFilePath, "c", "", "Config file path")
 	flag.StringVar(&configFilePath, "config", "", "Config file path")
+	flag.StringVar(&clientType, "client", "", "Client type. HTTP or GRPC")
+
+	flag.StringVar(&agentCertPath, "agent-cert", "", "Agent certificate path")
+	flag.StringVar(&caCertPath, "ca-cert", "", "CA ceritficate path")
 
 	flag.StringVar(&reportBulkURL, "ub", "", "Server endpoint path")
 	flag.UintVar(&rateLimit, "l", 0, "Max concurent connections")
@@ -169,6 +190,14 @@ func BuildConfig() (*Config, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse config file: %w", err)
 		}
+	}
+
+	if len(caCertPath) > 0 {
+		c.CACertPath = caCertPath
+	}
+
+	if len(agentCertPath) > 0 {
+		c.AgentCertPath = agentCertPath
 	}
 
 	if len(secretKey) > 0 {
@@ -215,11 +244,26 @@ func BuildConfig() (*Config, error) {
 	c.ReportEndpoint = getEndpoint(c.ServerAddress, c.ReportURL)
 	c.ReportBulkEndpoint = getEndpoint(c.ServerAddress, c.ReportBulkURL)
 
-	if len(c.EncKeyPath) > 0 {
+	addr, err := getOutboundIP(c.ServerAddress)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get host ip address: %w", err)
+	}
+
+	c.HostIPAddr = addr.String()
+
+	if len(clientType) != 0 {
+		c.ClientType = strings.ToLower(clientType)
+	}
+
+	if len(c.EncKeyPath) > 0 && c.ClientType != common.ModeGRPC {
 		c.EncPublicKey, err = parseEncKey(c.EncKeyPath)
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse public key: %v", err)
+			return nil, fmt.Errorf("failed to load public key: %w", err)
 		}
+	}
+
+	if c.ClientType != common.ModeHTTP && c.ClientType != common.ModeGRPC {
+		return nil, fmt.Errorf("wrong client type. Only HTTP and GRPC supported")
 	}
 
 	return &c, err
@@ -230,6 +274,8 @@ func (c *Config) parseEnvVariables() error {
 		ServerAddress  string `env:"ADDRESS"`
 		SecretKey      string `env:"KEY"`
 		EncKeyPath     string `env:"CRYPTO_KEY"`
+		CACertPath     string `env:"CA_CERT"`
+		AgentCertPath  string `env:"AGENT_CERT"`
 		ReportInterval int    `env:"REPORT_INTERVAL"`
 		PollInterval   int    `env:"POLL_INTERVAL"`
 		RateLimit      uint   `env:"RATE_LIMIT"`
@@ -238,6 +284,14 @@ func (c *Config) parseEnvVariables() error {
 	err := env.Parse(&ecfg)
 	if err != nil {
 		return err
+	}
+
+	if len(ecfg.CACertPath) > 0 {
+		c.CACertPath = ecfg.CACertPath
+	}
+
+	if len(ecfg.AgentCertPath) > 0 {
+		c.AgentCertPath = ecfg.AgentCertPath
 	}
 
 	if len(ecfg.SecretKey) > 0 {
@@ -265,4 +319,21 @@ func (c *Config) parseEnvVariables() error {
 	}
 
 	return nil
+}
+
+func getOutboundIP(serverAddr string) (net.IP, error) {
+	conn, err := net.Dial("udp", serverAddr)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		err = conn.Close()
+		if err != nil {
+			fmt.Printf("Failed to close connection: %v\n", err)
+		}
+	}()
+
+	localAddr := conn.LocalAddr().(*net.UDPAddr)
+
+	return localAddr.IP, nil
 }

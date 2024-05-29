@@ -1,4 +1,4 @@
-package handlers
+package mhttp
 
 // Provides middleware to log request parameters.
 
